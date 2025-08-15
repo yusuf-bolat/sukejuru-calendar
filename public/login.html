@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Calendar - Sign In</title>
+  <!-- Supabase JS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .auth-container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+      padding: 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .auth-header {
+      margin-bottom: 30px;
+    }
+
+    .auth-header h1 {
+      color: #333;
+      font-size: 28px;
+      margin: 0 0 10px 0;
+      font-weight: 600;
+    }
+
+    .auth-header p {
+      color: #666;
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      color: #333;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e1e5e9;
+      border-radius: 8px;
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.2s ease;
+      box-sizing: border-box;
+    }
+
+    .form-group input:focus {
+      border-color: #667eea;
+    }
+
+    .auth-button {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+      margin-bottom: 15px;
+    }
+
+    .auth-button:hover {
+      transform: translateY(-2px);
+    }
+
+    .auth-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .auth-toggle {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid #e1e5e9;
+    }
+
+    .auth-toggle p {
+      color: #666;
+      margin: 0 0 10px 0;
+    }
+
+    .auth-toggle button {
+      background: none;
+      border: none;
+      color: #667eea;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .auth-toggle button:hover {
+      color: #764ba2;
+    }
+
+    .error-message {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+
+    .success-message {
+      background: #d4edda;
+      color: #155724;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+
+    .loading {
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-container">
+    <div class="auth-header">
+      <h1 id="auth-title">📅 Sign In</h1>
+      <p id="auth-subtitle">Welcome back to Student Calendar</p>
+    </div>
+
+    <div id="message-container"></div>
+
+    <form id="auth-form">
+      <div class="form-group" id="name-group" style="display: none;">
+        <label for="name">Full Name</label>
+        <input type="text" id="name" placeholder="Enter your full name" />
+      </div>
+
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="Enter your email" required />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" required />
+      </div>
+
+      <button type="submit" class="auth-button" id="auth-submit">Sign In</button>
+    </form>
+
+    <div class="auth-toggle">
+      <p id="toggle-text">Don't have an account?</p>
+      <button type="button" id="toggle-button">Create Account</button>
+    </div>
+  </div>
+
+  <script src="supabase-auth.js"></script>
+  <script>
+    let isLoginMode = true;
+
+    // DOM elements
+    const authTitle = document.getElementById('auth-title');
+    const authSubtitle = document.getElementById('auth-subtitle');
+    const authForm = document.getElementById('auth-form');
+    const authSubmit = document.getElementById('auth-submit');
+    const toggleText = document.getElementById('toggle-text');
+    const toggleButton = document.getElementById('toggle-button');
+    const nameGroup = document.getElementById('name-group');
+    const messageContainer = document.getElementById('message-container');
+
+    // Form inputs
+    const nameInput = document.getElementById('name');
+    const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
+
+    function showMessage(message, type = 'error') {
+      messageContainer.innerHTML = `<div class="${type}-message">${message}</div>`;
+      setTimeout(() => {
+        messageContainer.innerHTML = '';
+      }, 5000);
+    }
+
+    function toggleAuthMode() {
+      isLoginMode = !isLoginMode;
+      
+      if (isLoginMode) {
+        // Switch to login mode
+        authTitle.textContent = '📅 Sign In';
+        authSubtitle.textContent = 'Welcome back to Student Calendar';
+        authSubmit.textContent = 'Sign In';
+        toggleText.textContent = "Don't have an account?";
+        toggleButton.textContent = 'Create Account';
+        nameGroup.style.display = 'none';
+        nameInput.required = false;
+      } else {
+        // Switch to register mode
+        authTitle.textContent = '📅 Create Account';
+        authSubtitle.textContent = 'Join Student Calendar today';
+        authSubmit.textContent = 'Create Account';
+        toggleText.textContent = 'Already have an account?';
+        toggleButton.textContent = 'Sign In';
+        nameGroup.style.display = 'block';
+        nameInput.required = true;
+      }
+
+      // Clear form
+      authForm.reset();
+      messageContainer.innerHTML = '';
+    }
+
+    async function handleSubmit(event) {
+      event.preventDefault();
+      
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const name = nameInput.value.trim();
+
+      if (!email || !password) {
+        showMessage('Please fill in all required fields');
+        return;
+      }
+
+      if (!isLoginMode && !name) {
+        showMessage('Please enter your full name');
+        return;
+      }
+
+      // Disable form during processing
+      authSubmit.disabled = true;
+      authSubmit.textContent = isLoginMode ? 'Signing In...' : 'Creating Account...';
+      document.querySelector('.auth-container').classList.add('loading');
+
+      try {
+        if (isLoginMode) {
+          // Login
+          const user = await authSystem.signIn(email, password);
+          const profile = await authSystem.getUserProfile();
+          showMessage(`Welcome back, ${profile?.name || user.email}!`, 'success');
+          
+          // Redirect to calendar after short delay
+          setTimeout(() => {
+            window.location.href = 'index.html';
+          }, 1000);
+        } else {
+          // Register
+          const result = await authSystem.signUp(email, password, name);
+          
+          if (result.needsConfirmation) {
+            showMessage(`Account created! Please check your email to confirm your account.`, 'success');
+            setTimeout(() => {
+              toggleAuthMode(); // Switch to login mode
+            }, 2000);
+          } else {
+            showMessage(`Account created successfully! Welcome, ${name}!`, 'success');
+            setTimeout(() => {
+              window.location.href = 'index.html';
+            }, 1000);
+          }
+        }
+      } catch (error) {
+        showMessage(error.message);
+      } finally {
+        // Re-enable form
+        authSubmit.disabled = false;
+        authSubmit.textContent = isLoginMode ? 'Sign In' : 'Create Account';
+        document.querySelector('.auth-container').classList.remove('loading');
+      }
+    }
+
+    // Event listeners
+    toggleButton.addEventListener('click', toggleAuthMode);
+    authForm.addEventListener('submit', handleSubmit);
+
+    // Check if user is already logged in
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Wait for auth system to initialize
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      if (authSystem.isLoggedIn()) {
+        window.location.href = 'index.html';
+      }
+    });
+  </script>
+</body>
+</html>

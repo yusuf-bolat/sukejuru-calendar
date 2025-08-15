@@ -1,0 +1,16 @@
+{
+  "name": "sukejuru-calendar",
+  "version": "1.0.0",
+  "description": "Student Calendar with AI Chatbot",
+  "main": "public/index.html",
+  "scripts": {
+    "dev": "python -m http.server 8000 --directory public",
+    "build": "echo 'Static site - no build needed'",
+    "start": "python -m http.server 8080 --directory public"
+  },
+  "keywords": ["calendar", "student", "ai", "chatbot", "supabase"],
+  "author": "Sukejuru Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

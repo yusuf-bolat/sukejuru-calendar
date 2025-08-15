@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Google API JS -->
+  <script src="https://apis.google.com/js/api.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Calendar - Dashboard</title>
+  <!-- Supabase JS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- FullCalendar CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
+  <style>
+    body { 
+      font-family: 'Segoe UI', Arial, sans-serif; 
+      margin: 0; 
+      box-sizing: border-box; 
+      background: #181818; 
+      color: #f2f2f2; 
+    }
+    
+    /* Header Styles */
+    .app-header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 15px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      margin-bottom: 24px;
+    }
+    
+    .app-title {
+      color: white;
+      font-size: 24px;
+      font-weight: 700;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    
+    .user-welcome {
+      color: white;
+      font-size: 14px;
+    }
+    
+    .user-name {
+      font-weight: 600;
+      color: #ffd700;
+    }
+    
+    .logout-btn {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.3s ease;
+    }
+    
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+    }
+    
+    .main-content {
+      padding: 0 24px;
+    }
+    
+    #main-layout {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 32px;
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0;
+      height: 75vh;
+    }
+    #calendar {
+      flex: 0 0 70%;
+      width: 70vw;
+      min-width: 400px;
+      max-width: 100%;
+      margin-right: 0;
+      height: 80vh;
+    }
+    #chatbot-container {
+      flex: 0 0 30%;
+      width: 30vw;
+      min-width: 250px;
+      max-width: 400px;
+      border: 1px solid #333;
+      border-radius: 16px;
+      padding: 20px 18px 18px 18px;
+      background: #222;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+      margin-left: 0;
+      height: 80vh;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+    #chat-messages {
+      flex: 1 1 auto;
+      min-height: 120px;
+      max-height: 50vh;
+      overflow-y: auto;
+      margin-bottom: 16px;
+      background: #181818;
+      border-radius: 8px;
+      border: 1px solid #333;
+      padding: 12px 10px;
+      font-size: 15px;
+      color: #f2f2f2;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+    }
+    .chat-user {
+      color: #4fc3f7;
+      font-weight: 500;
+      margin-bottom: 4px;
+      padding: 2px 0;
+    }
+    .chat-bot {
+      color: #f2f2f2;
+      font-weight: 400;
+      margin-bottom: 8px;
+      padding: 2px 0;
+    }
+    #chat-input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px 0 0 8px;
+      border: 1px solid #333;
+      background: #222;
+      color: #f2f2f2;
+      font-size: 16px;
+      outline: none;
+      margin-right: 0;
+      box-sizing: border-box;
+      transition: border 0.2s;
+    }
+    #chat-input:focus {
+      border: 1.5px solid #4fc3f7;
+    }
+    #send-btn {
+      padding: 10px 0;
+      width: 100%;
+      border-radius: 0 8px 8px 0;
+      border: none;
+      background: linear-gradient(90deg, #4fc3f7 0%, #1976d2 100%);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      box-shadow: 0 2px 8px rgba(33,150,243,0.12);
+      transition: background 0.2s, box-shadow 0.2s;
+      outline: none;
+      letter-spacing: 0.5px;
+    }
+    #send-btn:hover, #send-btn:focus {
+      background: linear-gradient(90deg, #1976d2 0%, #4fc3f7 100%);
+      box-shadow: 0 4px 16px rgba(33,150,243,0.18);
+    }
+    .chat-loading {
+      color: #4fc3f7;
+      font-style: italic;
+      padding: 8px 0;
+      font-size: 15px;
+    }
+    .chat-loading span {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin: 0 2px;
+      background: #4fc3f7;
+      border-radius: 100%;
+      animation: chat-loading-blink 1.4s infinite both;
+    }
+    @keyframes chat-loading-blink {
+      0%, 20% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.2;
+      }
+      100% {
+        opacity: 1;
+      }
+    }
+    /* Google Calendar Styles */
+    .gcal-btn {
+      background: #4285f4;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 13px;
+      margin-left: 10px;
+      transition: background-color 0.3s;
+    }
+    .gcal-btn:hover {
+      background: #3367d6;
+    }
+    .gcal-btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .gcal-auth-section {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #333;
+    }
+    .gcal-signout-btn {
+      background: #dc3545;
+      color: white;
+      border: none;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-left: 10px;
+      transition: background-color 0.3s;
+    }
+    .gcal-signout-btn:hover {
+      background: #c82333;
+    }
+    #gcal-user-info {
+      display: flex;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- App Header with User Info -->
+  <div class="app-header">
+    <h1 class="app-title">📅 Student Calendar</h1>
+    <div class="user-info">
+      <div class="user-welcome">
+        Welcome, <span class="user-name" id="user-name">Loading...</span>
+      </div>
+      <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
+    </div>
+  </div>
+  
+  <div class="main-content">
+  <div id="main-layout">
+    <div id="calendar"></div>
+    <div id="chatbot-container">
+      <h2>Student Calendar Chatbot</h2>
+      <div id="chat-messages"></div>
+      <input type="text" id="chat-input" placeholder="Describe your week, classes, or ask for help..." />
+      <button id="send-btn">Send</button>
+              <div class="gcal-auth-section">
+          <div id="gcal-user-info" style="display: none;">
+            <span id="gcal-user-email" style="color: #28a745; font-weight: bold;"></span>
+            <button id="gcal-signout-btn" class="gcal-signout-btn">Sign Out</button>
+          </div>
+          <button id="gcal-signin-btn" class="gcal-btn">Connect Google Calendar</button>
+          <button id="gcal-export-btn" class="gcal-btn" style="display: none;">Export to Google Calendar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Authentication -->
+  <script src="supabase-auth.js"></script>
+  
+  <!-- FullCalendar JS -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+  <script>
+    // Check authentication before initializing calendar
+    document.addEventListener('DOMContentLoaded', async function() {
+      // Wait for auth system to initialize
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Check if user is logged in
+      if (!authSystem.isLoggedIn()) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      // Set user name
+      try {
+        const profile = await authSystem.getUserProfile();
+        const user = await authSystem.getCurrentUser();
+        document.getElementById('user-name').textContent = profile?.name || user?.email || 'User';
+      } catch (error) {
+        console.error('Error loading user info:', error);
+        document.getElementById('user-name').textContent = 'User';
+      }
+
+      // Initialize calendar
+      await initializeCalendar();
+    });
+
+    async function initializeCalendar() {
+      const calendarEl = document.getElementById('calendar');
+      
+      // Load events from Supabase
+      let events = [];
+      try {
+        const supabaseEvents = await authSystem.getEvents();
+        events = supabaseEvents.map(event => ({
+          id: event.id,
+          title: event.title,
+          start: event.start_date,
+          end: event.end_date,
+          allDay: event.all_day,
+          backgroundColor: event.color,
+          extendedProps: {
+            description: event.description
+          }
+        }));
+      } catch (error) {
+        console.error('Error loading events:', error);
+      }
+
+      var calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'timeGridWeek',
+        firstDay: 1, // Start weeks on Monday
+        headerToolbar: {
+          left: 'prev,next today',
+          center: 'title',
+          right: 'dayGridMonth,timeGridWeek,timeGridDay'
+        },
+        editable: true,
+        selectable: true,
+        eventResizableFromStart: true,
+        events: events,
+        
+        select: async function(info) {
+          const title = prompt('Enter event title:');
+          if (title) {
+            try {
+              const eventData = {
+                title: title,
+                start: info.startStr,
+                end: info.endStr,
+                allDay: info.allDay
+              };
+              
+              const newEvent = await authSystem.createEvent(eventData);
+              
+              calendar.addEvent({
+                id: newEvent.id,
+                title: newEvent.title,
+                start: newEvent.start_date,
+                end: newEvent.end_date,
+                allDay: newEvent.all_day,
+                backgroundColor: newEvent.color
+              });
+            } catch (error) {
+              console.error('Error creating event:', error);
+              alert('Failed to create event: ' + error.message);
+            }
+          }
+          calendar.unselect();
+        },
+        
+        eventClick: async function(info) {
+          const newTitle = prompt('Edit event title:', info.event.title);
+          if (newTitle === null) return;
+          
+          if (newTitle === '') {
+            if (confirm('Delete this event?')) {
+              try {
+                await authSystem.deleteEvent(info.event.id);
+                info.event.remove();
+              } catch (error) {
+                console.error('Error deleting event:', error);
+                alert('Failed to delete event: ' + error.message);
+              }
+            }
+          } else {
+            try {
+              await authSystem.updateEvent(info.event.id, {
+                title: newTitle,
+                start: info.event.startStr,
+                end: info.event.endStr,
+                allDay: info.event.allDay,
+                backgroundColor: info.event.backgroundColor
+              });
+              info.event.setProp('title', newTitle);
+            } catch (error) {
+              console.error('Error updating event:', error);
+              alert('Failed to update event: ' + error.message);
+            }
+          }
+        },
+        
+        eventDrop: async function(info) {
+          try {
+            await authSystem.updateEvent(info.event.id, {
+              title: info.event.title,
+              start: info.event.startStr,
+              end: info.event.endStr,
+              allDay: info.event.allDay,
+              backgroundColor: info.event.backgroundColor
+            });
+          } catch (error) {
+            console.error('Error updating event:', error);
+            info.revert();
+            alert('Failed to update event: ' + error.message);
+          }
+        },
+        
+        eventResize: async function(info) {
+          try {
+            await authSystem.updateEvent(info.event.id, {
+              title: info.event.title,
+              start: info.event.startStr,
+              end: info.event.endStr,
+              allDay: info.event.allDay,
+              backgroundColor: info.event.backgroundColor
+            });
+          } catch (error) {
+            console.error('Error updating event:', error);
+            info.revert();
+            alert('Failed to update event: ' + error.message);
+          }
+        }
+      });
+      
+      calendar.render();
+      
+      // Expose calendar for chatbot.js
+      window.calendar = calendar;
+      
+      // Subscribe to real-time updates
+      const subscription = authSystem.subscribeToEvents((payload) => {
+        console.log('Real-time event update:', payload);
+        // Reload events when changes occur from other sessions
+        calendar.refetchEvents();
+      });
+      
+      // Clean up subscription on page unload
+      window.addEventListener('beforeunload', () => {
+        if (subscription) {
+          subscription.unsubscribe();
+        }
+      });
+    }
+
+    // Logout function
+    async function handleLogout() {
+      try {
+        await authSystem.signOut();
+        window.location.href = 'login.html';
+      } catch (error) {
+        console.error('Logout error:', error);
+        // Force redirect even if signOut fails
+        window.location.href = 'login.html';
+      }
+    }
+  </script>
+  <script src="chatbot.js"></script>
+  <!-- Google API Library -->
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script>
+    // Google Calendar API integration
+    const CLIENT_ID = '311051722720-5qa0qjjpube1sr6r6bkf1jojk1le7si7.apps.googleusercontent.com'; // <-- Replace with your Google OAuth Client ID
+    const API_KEY = 'YOUR_API_KEY'; // <-- Replace with your API key (optional for OAuth)
+    const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"];
+    const SCOPES = "https://www.googleapis.com/auth/calendar.events";
+
+    let isGapiLoaded = false;
+    let isGisLoaded = false;
+    let tokenClient;
+
+    // Initialize Google API
+    function gcalInit() {
+      if (CLIENT_ID === 'YOUR_CLIENT_ID.apps.googleusercontent.com') {
+        console.log('Google Calendar: Please set up your CLIENT_ID in index.html');
+        document.getElementById('gcal-signin-btn').textContent = 'Configure Google API First';
+        document.getElementById('gcal-signin-btn').disabled = true;
+        return;
+      }
+
+      gapi.load('client', async () => {
+        try {
+          await gapi.client.init({
+            discoveryDocs: DISCOVERY_DOCS
+          });
+          console.log('Google API client initialized successfully');
+          isGapiLoaded = true;
+          maybeEnableButtons();
+        } catch (error) {
+          console.error('Failed to initialize Google API client:', error);
+          isGapiLoaded = false;
+        }
+      });
+
+      // Initialize Google Identity Services
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: (tokenResponse) => {
+          if (tokenResponse.error !== undefined) {
+            console.error('Token error:', tokenResponse.error);
+            if (window.appendMessage) {
+              appendMessage('bot', '❌ Failed to connect to Google Calendar. Please check your internet connection and try again.');
+            }
+            return;
+          }
+          // Token received, update UI and notify user
+          updateSigninStatus(true);
+          if (window.appendMessage) {
+            setTimeout(() => {
+              appendMessage('bot', '✅ Successfully connected to Google Calendar! You can now export your events.');
+            }, 500); // Small delay to let UI update first
+          }
+        }
+      });
+      isGisLoaded = true;
+      maybeEnableButtons();
+    }
+
+    function maybeEnableButtons() {
+      console.log('maybeEnableButtons called - isGapiLoaded:', isGapiLoaded, 'isGisLoaded:', isGisLoaded);
+      
+      if (isGapiLoaded && isGisLoaded && CLIENT_ID !== 'YOUR_CLIENT_ID.apps.googleusercontent.com') {
+        // Double-check that the Calendar API is available
+        if (gapi.client.calendar && gapi.client.calendar.events) {
+          console.log('Google Calendar API is ready');
+          document.getElementById('gcal-signin-btn').disabled = false;
+        } else {
+          console.log('Google Calendar API not ready yet, retrying in 1 second...');
+          setTimeout(() => {
+            if (gapi.client.calendar && gapi.client.calendar.events) {
+              console.log('Google Calendar API is now ready (after retry)');
+              document.getElementById('gcal-signin-btn').disabled = false;
+            } else {
+              console.error('Google Calendar API failed to load properly');
+            }
+          }, 1000);
+        }
+      }
+    }
+
+    async function getUserInfo() {
+      try {
+        const response = await gapi.client.request({
+          path: 'https://www.googleapis.com/oauth2/v1/userinfo',
+        });
+        return response.result;
+      } catch (error) {
+        console.error('Error getting user info:', error);
+        return null;
+      }
+    }
+
+    function updateSigninStatus(isSignedIn) {
+      console.log('updateSigninStatus called with:', isSignedIn); // Debug log
+      
+      if (isSignedIn) {
+        // Try to get user info, but don't block UI update if it fails
+        getUserInfo().then(userInfo => {
+          if (userInfo && userInfo.email) {
+            document.getElementById('gcal-user-email').textContent = userInfo.email;
+          } else {
+            // Fallback if getUserInfo fails
+            document.getElementById('gcal-user-email').textContent = 'Connected User';
+          }
+        }).catch(error => {
+          console.log('getUserInfo failed, using fallback:', error);
+          document.getElementById('gcal-user-email').textContent = 'Connected User';
+        });
+        
+        // Update UI immediately regardless of getUserInfo result
+        document.getElementById('gcal-user-info').style.display = 'flex';
+        document.getElementById('gcal-signin-btn').style.display = 'none';
+        document.getElementById('gcal-export-btn').style.display = 'inline-block';
+        
+        // Debug logs
+        console.log('Export button should now be visible');
+        const exportBtn = document.getElementById('gcal-export-btn');
+        console.log('Export button element:', exportBtn);
+        console.log('Export button display style:', exportBtn.style.display);
+      } else {
+        document.getElementById('gcal-user-info').style.display = 'none';
+        document.getElementById('gcal-signin-btn').style.display = 'inline-block';
+        document.getElementById('gcal-export-btn').style.display = 'none';
+      }
+    }
+
+    function gcalSignIn() {
+      if (!isGisLoaded) {
+        console.error('Google Identity Services not loaded');
+        if (window.appendMessage) {
+          appendMessage('bot', '❌ Google Calendar service is not ready yet. Please refresh the page and try again.');
+        }
+        return;
+      }
+      
+      if (window.appendMessage) {
+        appendMessage('bot', '🔐 Opening Google sign-in window. Please sign in and grant calendar permissions...');
+      }
+      
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    function gcalSignOut() {
+      const token = gapi.client.getToken();
+      if (token !== null) {
+        google.accounts.oauth2.revoke(token.access_token);
+        gapi.client.setToken('');
+        updateSigninStatus(false);
+        
+        if (window.appendMessage) {
+          appendMessage('bot', '👋 Successfully signed out from Google Calendar. Your events are still saved locally.');
+        }
+      }
+    }
+
+    async function gcalCreateEvent(event) {
+      try {
+        // Check if the Google Calendar API is available
+        if (!gapi.client.calendar || !gapi.client.calendar.events) {
+          throw new Error('Google Calendar API not available');
+        }
+        
+        const response = await gapi.client.calendar.events.insert({
+          calendarId: 'primary',
+          resource: event
+        });
+        return response;
+      } catch (error) {
+        console.error('Error creating event:', error);
+        console.error('Event data:', event);
+        throw error;
+      }
+    }
+
+    async function exportCalendarToGoogle() {
+      // Get events from FullCalendar
+      const events = window.calendar.getEvents();
+      if (!events.length) {
+        // Use chatbot to show message instead of alert
+        if (window.appendMessage) {
+          appendMessage('bot', 'No events to export! Please add some events first using the chatbot.');
+        } else {
+          alert('No events to export!');
+        }
+        return;
+      }
+
+      // Notify user that export is starting
+      if (window.appendMessage) {
+        appendMessage('bot', `Starting export of ${events.length} event(s) to Google Calendar...`);
+      }
+
+      // Disable button during export
+      const exportBtn = document.getElementById('gcal-export-btn');
+      const originalText = exportBtn.textContent;
+      exportBtn.disabled = true;
+      exportBtn.textContent = 'Exporting...';
+
+      let exported = 0;
+      let errors = 0;
+      const totalEvents = events.length;
+      let errorDetails = [];
+
+      for (const ev of events) {
+        try {
+          // Format for Google Calendar
+          let start = new Date(ev.start);
+          let end = new Date(ev.end || ev.start);
+          
+          // If no end time, set it to 1 hour after start
+          if (!ev.end) {
+            end = new Date(start.getTime() + 60 * 60 * 1000);
+          }
+
+          let gcalEvent = {
+            summary: ev.title,
+            description: ev.extendedProps?.description || `Event created from FullCalendar\nColor: ${ev.backgroundColor || 'default'}`,
+            start: {
+              dateTime: start.toISOString(),
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            },
+            end: {
+              dateTime: end.toISOString(),
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            },
+            colorId: getGoogleColorId(ev.backgroundColor)
+          };
+
+          await gcalCreateEvent(gcalEvent);
+          exported++;
+        } catch (error) {
+          console.error('Error exporting event:', ev.title, error);
+          errors++;
+          errorDetails.push(`"${ev.title}"`);
+        }
+      }
+
+      // Re-enable button
+      exportBtn.disabled = false;
+      exportBtn.textContent = originalText;
+
+      // Show results through chatbot
+      if (window.appendMessage) {
+        if (errors === 0) {
+          appendMessage('bot', `🎉 Successfully exported all ${exported} events to Google Calendar! Check your Google Calendar to see them.`);
+        } else if (exported > 0) {
+          appendMessage('bot', `✅ Exported ${exported} events successfully. ⚠️ ${errors} events failed to export: ${errorDetails.join(', ')}. Check browser console for details.`);
+        } else {
+          appendMessage('bot', `❌ Failed to export any events to Google Calendar. Please check your internet connection and try again. Error details in browser console.`);
+        }
+      } else {
+        // Fallback to alerts if chatbot not available
+        if (errors === 0) {
+          alert(`Successfully exported all ${exported} events to Google Calendar!`);
+        } else {
+          alert(`Exported ${exported} events successfully. ${errors} events failed to export. Check console for details.`);
+        }
+      }
+    }
+
+    // Map FullCalendar colors to Google Calendar color IDs
+    function getGoogleColorId(backgroundColor) {
+      const colorMap = {
+        '#3788d8': '1', // Blue for lectures -> Lavender
+        '#28a745': '2', // Green for exercises -> Sage
+        '#6f42c1': '3', // Purple for personal -> Grape
+        '#dc3545': '4', // Red -> Flamingo
+        '#fd7e14': '6', // Orange -> Tangerine
+      };
+      return colorMap[backgroundColor] || '1'; // Default to Lavender
+    }
+
+    // Setup event handlers
+    document.addEventListener('DOMContentLoaded', function() {
+      document.getElementById('gcal-signin-btn').onclick = gcalSignIn;
+      document.getElementById('gcal-signout-btn').onclick = gcalSignOut;
+      document.getElementById('gcal-export-btn').onclick = exportCalendarToGoogle;
+    });
+
+    // Initialize Google Calendar API when page loads
+    window.onload = function() {
+      gcalInit();
+    };
+  </script>
+  <!-- Google Identity Services Library -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</body>
+</html>
