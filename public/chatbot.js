@@ -1,19 +1,26 @@
 // chatbot.js
 // Handles the AI chatbot logic for the calendar webapp
 
-// Get OpenAI API key from environment or prompt user
+// Get OpenAI API key from config or prompt user
 function getOpenAIApiKey() {
-  // Try to get from environment variable (for Vercel deployment)
-  if (typeof process !== 'undefined' && process.env && process.env.OPENAI_API_KEY) {
-    return process.env.OPENAI_API_KEY;
+  // Check if API key is configured in the app
+  if (window.OPENAI_API_KEY) {
+    return window.OPENAI_API_KEY;
   }
   
-  // For local development, prompt user or use localStorage
+  // For development, use localStorage with one-time prompt
   let apiKey = localStorage.getItem('openai_api_key');
   if (!apiKey) {
-    apiKey = prompt('Please enter your OpenAI API key:');
-    if (apiKey) {
+    apiKey = prompt(
+      'OpenAI API Key Required:\n\n' +
+      'To use the AI chatbot, please enter your OpenAI API key.\n' +
+      'Get one from: https://platform.openai.com/api-keys\n\n' +
+      'Your key will be saved locally in your browser.'
+    );
+    if (apiKey && apiKey.startsWith('sk-')) {
       localStorage.setItem('openai_api_key', apiKey);
+    } else {
+      return null;
     }
   }
   return apiKey;

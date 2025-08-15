@@ -19,6 +19,9 @@ node_modules/
 .env.local
 .env.production
 
+# Configuration files with API keys
+public/config.js
+
 # Vercel
 .vercel
 
