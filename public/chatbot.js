@@ -3,8 +3,10 @@
 
 // Get OpenAI API key from config or prompt user
 function getOpenAIApiKey() {
-  // Check if API key is configured in the app
-  if (window.OPENAI_API_KEY) {
+  // Check if API key is configured in the app and is valid
+  if (window.OPENAI_API_KEY && 
+      window.OPENAI_API_KEY !== 'PLACEHOLDER_FOR_OPENAI_KEY' && 
+      window.OPENAI_API_KEY.startsWith('sk-')) {
     return window.OPENAI_API_KEY;
   }
   
@@ -273,6 +275,14 @@ async function askChatGPT(message, calendar, options = {}) {
         pendingGeneralEvent = false; // Clear flag when event is added
       }
       if (!responded) {
+        // Debug information
+        console.log('API Response Debug:', {
+          botText: botText,
+          cleanText: cleanText,
+          apiKey: apiKey ? 'Present' : 'Missing',
+          data: data
+        });
+        
         // Check if response contains JSON that should be processed
         if (botText.trim().includes('{') && botText.trim().includes('}')) {
           try {
@@ -360,7 +370,16 @@ async function askChatGPT(message, calendar, options = {}) {
     }
   } catch (err) {
     hideLoading();
-    appendMessage('bot', 'Sorry, there was a problem connecting to the AI.');
+    console.error('ChatGPT API Error:', err);
+    
+    // Check if it's an API key issue
+    if (err.message && err.message.includes('401')) {
+      appendMessage('bot', '❌ API key error. Please check your OpenAI API key configuration.');
+    } else if (err.message && err.message.includes('quota')) {
+      appendMessage('bot', '❌ OpenAI API quota exceeded. Please check your usage limits.');
+    } else {
+      appendMessage('bot', `❌ Error connecting to AI: ${err.message || 'Unknown error'}. Please try again.`);
+    }
   }
 }
 
