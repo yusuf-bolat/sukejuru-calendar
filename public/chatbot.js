@@ -1,9 +1,22 @@
 // chatbot.js
 // Handles the AI chatbot logic for the calendar webapp
 
-// Get OpenAI API key from config or prompt user
-function getOpenAIApiKey() {
-  // Check if API key is configured in the app and is valid
+// Get OpenAI API key from config or server
+async function getOpenAIApiKey() {
+  // First, try to get from server-side environment
+  try {
+    const response = await fetch('/api/openai-key');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.apiKey && data.apiKey.startsWith('sk-')) {
+        return data.apiKey;
+      }
+    }
+  } catch (error) {
+    console.log('Could not fetch API key from server, trying other methods...');
+  }
+  
+  // Check if API key is configured in the app config and is valid
   if (window.OPENAI_API_KEY && 
       window.OPENAI_API_KEY !== 'PLACEHOLDER_FOR_OPENAI_KEY' && 
       window.OPENAI_API_KEY.startsWith('sk-')) {
@@ -79,8 +92,8 @@ function hideLoading() {
 appendMessage('bot', 'Hello! I am your student calendar consultant. I can help you schedule activities, manage events, and export them to Google Calendar. Try saying "Add volleyball practice Thursday 7pm" or "export to google calendar"!');
 
 async function askChatGPT(message, calendar, options = {}) {
-  // Get API key from environment or prompt user
-  const apiKey = getOpenAIApiKey();
+  // Get API key from server, config, or prompt user
+  const apiKey = await getOpenAIApiKey();
   if (!apiKey) {
     appendMessage('bot', '❌ OpenAI API key not configured. Please add your API key to use the chatbot.');
     return;
