@@ -169,14 +169,18 @@ class SupabaseAuth {
     if (!user) throw new Error('Not authenticated')
 
     try {
+      // Normalize to ISO and ensure end exists (default +1h)
+      const startISO = new Date(eventData.start).toISOString()
+      const endISO = eventData.end ? new Date(eventData.end).toISOString() : new Date(new Date(startISO).getTime() + 60 * 60 * 1000).toISOString()
+
       const { data, error } = await this.supabase
         .from('events')
         .insert([{
           user_id: user.id,
           title: eventData.title,
           description: eventData.description || '',
-          start_date: eventData.start,
-          end_date: eventData.end,
+          start_date: startISO,
+          end_date: endISO,
           all_day: eventData.allDay || false,
           color: eventData.backgroundColor || '#3788d8'
         }])
@@ -196,13 +200,17 @@ class SupabaseAuth {
     if (!user) throw new Error('Not authenticated')
 
     try {
+      // Normalize to ISO and ensure end exists (default +1h)
+      const startISO = new Date(eventData.start).toISOString()
+      const endISO = eventData.end ? new Date(eventData.end).toISOString() : new Date(new Date(startISO).getTime() + 60 * 60 * 1000).toISOString()
+
       const { data, error } = await this.supabase
         .from('events')
         .update({
           title: eventData.title,
           description: eventData.description,
-          start_date: eventData.start,
-          end_date: eventData.end,
+          start_date: startISO,
+          end_date: endISO,
           all_day: eventData.allDay,
           color: eventData.backgroundColor,
           updated_at: new Date().toISOString()

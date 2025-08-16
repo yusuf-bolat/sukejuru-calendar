@@ -63,8 +63,19 @@ export default async function handler(req) {
     });
 
     if (!resp.ok) {
-      const errText = await resp.text();
-      return new Response(JSON.stringify({ error: 'OpenAI API error', details: errText }), {
+      const contentType = resp.headers.get('content-type') || '';
+      let details = undefined;
+      try {
+        if (contentType.includes('application/json')) {
+          const j = await resp.json();
+          details = j;
+        } else {
+          details = await resp.text();
+        }
+      } catch (_) {
+        details = 'Failed to read error body';
+      }
+      return new Response(JSON.stringify({ error: 'OpenAI API error', status: resp.status, details }), {
         status: resp.status,
         headers: jsonHeaders(origin),
       });
@@ -76,7 +87,7 @@ export default async function handler(req) {
       headers: jsonHeaders(origin),
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'Internal server error', message: String(err && err.message || err) }), {
+    return new Response(JSON.stringify({ error: 'Internal server error', message: String((err && err.message) || err) }), {
       status: 500,
       headers: jsonHeaders(origin),
     });

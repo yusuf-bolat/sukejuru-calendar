@@ -210,14 +210,28 @@ async function askChatGPT(message, calendar, options = {}) {
       if (events && events.length) {
         // Process each event asynchronously
         for (const ev of events) {
-          const start = ev.start || ev["start date"] || ev.start_date;
-          const end = ev.end || ev["end date"] || ev.end_date;
-          if (ev.title && start) {
+          const startRaw = ev.start || ev["start date"] || ev.start_date;
+          const endRaw = ev.end || ev["end date"] || ev.end_date;
+          if (ev.title && startRaw) {
             try {
+              // Normalize dates and default end to +1 hour if missing/invalid, interpreting naive strings as local time
+              const startDate = parseLocalDateTime(startRaw);
+              if (!startDate) throw new Error('Invalid start date');
+              let endDate = null;
+              if (endRaw) {
+                const tmp = parseLocalDateTime(endRaw);
+                endDate = tmp || null;
+              }
+              if (!endDate) {
+                endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+              }
+              const startISO = startDate.toISOString();
+              const endISO = endDate.toISOString();
+
               const eventData = {
                 title: ev.title,
-                start: start,
-                end: end,
+                start: startISO,
+                end: endISO,
                 allDay: false,
                 backgroundColor: '#6f42c1',
                 description: ev.description || ''
@@ -241,15 +255,30 @@ async function askChatGPT(message, calendar, options = {}) {
             } catch (error) {
               console.error('Error saving event:', error);
               // Fallback to local calendar only
-              calendar.addEvent({
-                title: ev.title,
-                start: start,
-                end: end,
-                description: ev.description,
-                backgroundColor: '#6f42c1',
-                borderColor: '#5a2d91',
-                textColor: '#ffffff'
-              });
+              try {
+                const startDate = parseLocalDateTime(startRaw) || new Date();
+                let endDate = endRaw ? (parseLocalDateTime(endRaw) || new Date(startDate.getTime() + 60 * 60 * 1000)) : new Date(startDate.getTime() + 60 * 60 * 1000);
+                calendar.addEvent({
+                  title: ev.title,
+                  start: startDate,
+                  end: endDate,
+                  description: ev.description,
+                  backgroundColor: '#6f42c1',
+                  borderColor: '#5a2d91',
+                  textColor: '#ffffff'
+                });
+              } catch (_) {
+                // As a last resort, add with raw values
+                calendar.addEvent({
+                  title: ev.title,
+                  start: startRaw,
+                  end: endRaw,
+                  description: ev.description,
+                  backgroundColor: '#6f42c1',
+                  borderColor: '#5a2d91',
+                  textColor: '#ffffff'
+                });
+              }
             }
           }
         }
@@ -374,36 +403,70 @@ async function loadCourses() {
 
 // Utility to add course schedule to calendar
 async function addCourseToCalendar(course, group, calendar) {
+  // helper to persist then add
+  async function saveAndAdd({ title, startDate, endDate, description, color }) {
+    try {
+      const saved = await window.authSystem.createEvent({
+        title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        allDay: false,
+        backgroundColor: color,
+        description: description || ''
+      });
+      calendar.addEvent({
+        id: saved.id,
+        title: saved.title,
+        start: saved.start_date,
+        end: saved.end_date,
+        allDay: saved.all_day,
+        backgroundColor: saved.color,
+        extendedProps: { description: saved.description }
+      });
+    } catch (e) {
+      console.error('Failed to persist course event, adding locally:', e);
+      calendar.addEvent({
+        title,
+        start: startDate,
+        end: endDate,
+        description,
+        backgroundColor: color,
+        borderColor: color,
+        textColor: '#ffffff'
+      });
+    }
+  }
+
   // Handle lectures
   if (course.lecture) {
     if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
       // Grouped lectures
       if (course.lecture[group]) {
-        course.lecture[group].forEach(([lecturer, day, start, end]) => {
-          calendar.addEvent({
+        for (const [lecturer, day, start, end] of course.lecture[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
             title: `${course.short_name} Lecture`,
-            start: nextWeekdayDate(day, start),
-            end: nextWeekdayDate(day, end),
+            startDate,
+            endDate,
             description: `Lecturer: ${lecturer}`,
-            backgroundColor: '#3788d8', // Blue for lectures
-            borderColor: '#2969b0',
-            textColor: '#ffffff'
+            color: '#3788d8'
           });
-        });
+        }
       }
     } else {
       // Single array
-      course.lecture.forEach(([lecturer, day, start, end]) => {
-        calendar.addEvent({
+      for (const [lecturer, day, start, end] of course.lecture) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
           title: `${course.short_name} Lecture`,
-          start: nextWeekdayDate(day, start),
-          end: nextWeekdayDate(day, end),
+          startDate,
+          endDate,
           description: `Lecturer: ${lecturer}`,
-          backgroundColor: '#3788d8', // Blue for lectures
-          borderColor: '#2969b0',
-          textColor: '#ffffff'
+          color: '#3788d8'
         });
-      });
+      }
     }
   }
   // Handle exercises
@@ -411,31 +474,31 @@ async function addCourseToCalendar(course, group, calendar) {
     if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
       // Grouped exercises
       if (course.exercise[group]) {
-        course.exercise[group].forEach(([lecturer, day, start, end]) => {
-          calendar.addEvent({
+        for (const [lecturer, day, start, end] of course.exercise[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
             title: `${course.short_name} Exercise`,
-            start: nextWeekdayDate(day, start),
-            end: nextWeekdayDate(day, end),
+            startDate,
+            endDate,
             description: `Lecturer: ${lecturer}`,
-            backgroundColor: '#28a745', // Green for exercises
-            borderColor: '#1e7e34',
-            textColor: '#ffffff'
+            color: '#28a745'
           });
-        });
+        }
       }
     } else {
       // Single array
-      course.exercise.forEach(([lecturer, day, start, end]) => {
-        calendar.addEvent({
+      for (const [lecturer, day, start, end] of course.exercise) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
           title: `${course.short_name} Exercise`,
-          start: nextWeekdayDate(day, start),
-          end: nextWeekdayDate(day, end),
+          startDate,
+          endDate,
           description: `Lecturer: ${lecturer}`,
-          backgroundColor: '#28a745', // Green for exercises
-          borderColor: '#1e7e34',
-          textColor: '#ffffff'
+          color: '#28a745'
         });
-      });
+      }
     }
   }
 }
@@ -572,11 +635,20 @@ async function updateCourseGroup(courseName, fromGroup, toGroup, calendar) {
     return;
   }
   
-  // Remove old events
-  oldEvents.forEach(event => event.remove());
+  // Remove old events (calendar + DB)
+  for (const event of oldEvents) {
+    try {
+      if (event.id) {
+        await window.authSystem.deleteEvent(event.id);
+      }
+    } catch (e) {
+      console.warn('Failed to delete event from DB, removing locally:', e);
+    }
+    event.remove();
+  }
   
-  // Add new group events
-  addCourseToCalendar(matchedCourse, toGroup, calendar);
+  // Add new group events (persisting to DB)
+  await addCourseToCalendar(matchedCourse, toGroup, calendar);
   
   appendMessage('bot', `Updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
 }
@@ -744,13 +816,29 @@ async function handleUserInput(msg, calendar) {
   askChatGPT(msg, calendar, {isCourse: 'auto'});
 }
 
-sendBtn.onclick = function() {
-  const msg = chatInput.value.trim();
-  if (!msg) return;
-  appendMessage('user', msg);
-  chatInput.value = '';
-  handleUserInput(msg, window.calendar);
-};
-chatInput.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') sendBtn.click();
-});
+// Parse a datetime string as LOCAL time when no timezone is provided
+function parseLocalDateTime(input) {
+  if (!input) return null;
+  if (input instanceof Date) return new Date(input.getTime());
+  if (typeof input === 'number') return new Date(input);
+  let str = String(input).trim();
+  // If explicit numeric offset (+09:00 or -0700), trust it
+  if (/[+\-]\d{2}:?\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d) ? null : d;
+  }
+  // If ends with 'Z' (UTC) but user likely means local, strip it and treat as local
+  if (/[zZ]$/.test(str)) {
+    str = str.replace(/[zZ]$/, '');
+  }
+  // Match forms: YYYY-MM-DD, YYYY-MM-DDTHH:mm[:ss], or with space instead of T
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const [, y, mo, d, h = '00', mi = '00', s = '00'] = m;
+    const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+    return isNaN(dt) ? null : dt;
+  }
+  // Fallback to native parsing
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
+}
