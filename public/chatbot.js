@@ -94,7 +94,7 @@ async function askChatGPT(message, calendar, options = {}) {
 
   try {
     // Call our secure serverless function instead of OpenAI directly
-    const res = await fetch('/api/openai-key', {
+    const res = await fetch('/api/openai-edge', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
