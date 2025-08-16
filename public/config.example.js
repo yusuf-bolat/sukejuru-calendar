@@ -1,7 +1,7 @@
 // Configuration for Sukejuru Calendar
 // This is the example config file - copy to config.js and add your API key
 
-window.OPENAI_API_KEY = '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';
+window.OPENAI_API_KEY = 'REPLACE_WITH_YOUR_API_KEY';
 
 // Instructions:
 // 1. Copy this file to 'config.js' in the same directory
