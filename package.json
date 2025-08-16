@@ -11,6 +11,8 @@
   "keywords": ["calendar", "student", "ai", "chatbot", "supabase"],
   "author": "Sukejuru Team",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
   "devDependencies": {}
 }

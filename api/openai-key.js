@@ -1,8 +1,8 @@
-// Vercel serverless function to provide OpenAI API key
-module.exports = (req, res) => {
+// Vercel serverless function for secure OpenAI API calls
+module.exports = async (req, res) => {
   // Add CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Methods', 'POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
   // Handle preflight requests
@@ -10,34 +10,48 @@ module.exports = (req, res) => {
     return res.status(200).end();
   }
   
-  // Only allow GET requests
-  if (req.method !== 'GET') {
+  // Only allow POST requests
+  if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  
-  // Get the API key from environment variables
-  const apiKey = process.env.OPENAI_API_KEY;
-  
-  // Debug logging (will show in Vercel function logs)
-  console.log('Environment check:', {
-    hasApiKey: !!apiKey,
-    keyLength: apiKey ? apiKey.length : 0,
-    startsWithSk: apiKey ? apiKey.startsWith('sk-') : false
-  });
-  
-  if (!apiKey) {
-    console.log('API key missing from environment');
+
+  try {
+    const { messages } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Messages array is required' });
+    }
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`, // ✅ Secure server-side only
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: messages,
+        max_tokens: 500
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('OpenAI API Error:', errorData);
+      return res.status(response.status).json({ 
+        error: 'OpenAI API error',
+        details: errorData 
+      });
+    }
+
+    const data = await response.json();
+    return res.status(200).json(data);
+
+  } catch (error) {
+    console.error('Server error:', error);
     return res.status(500).json({ 
-      error: 'OpenAI API key not configured',
-      debug: 'Environment variable OPENAI_API_KEY is missing'
+      error: 'Internal server error',
+      message: error.message 
     });
   }
-  
-  // Return the API key
-  console.log('API key found, returning to client');
-  return res.status(200).json({ 
-    apiKey: apiKey,
-    configured: true,
-    debug: 'API key successfully retrieved from environment'
-  });
 };

@@ -1,44 +1,11 @@
 // chatbot.js
 // Handles the AI chatbot logic for the calendar webapp
 
-// Get OpenAI API key from config or server
+// Get OpenAI API key - now handled securely on server
 async function getOpenAIApiKey() {
-  // First, try to get from server-side environment
-  try {
-    const response = await fetch('/api/openai-key');
-    if (response.ok) {
-      const data = await response.json();
-      if (data.apiKey && data.apiKey.startsWith('sk-')) {
-        return data.apiKey;
-      }
-    }
-  } catch (error) {
-    console.log('Could not fetch API key from server, trying other methods...');
-  }
-  
-  // Check if API key is configured in the app config and is valid
-  if (window.OPENAI_API_KEY && 
-      window.OPENAI_API_KEY !== 'PLACEHOLDER_FOR_OPENAI_KEY' && 
-      window.OPENAI_API_KEY.startsWith('sk-')) {
-    return window.OPENAI_API_KEY;
-  }
-  
-  // For development, use localStorage with one-time prompt
-  let apiKey = localStorage.getItem('openai_api_key');
-  if (!apiKey) {
-    apiKey = prompt(
-      'OpenAI API Key Required:\n\n' +
-      'To use the AI chatbot, please enter your OpenAI API key.\n' +
-      'Get one from: https://platform.openai.com/api-keys\n\n' +
-      'Your key will be saved locally in your browser.'
-    );
-    if (apiKey && apiKey.startsWith('sk-')) {
-      localStorage.setItem('openai_api_key', apiKey);
-    } else {
-      return null;
-    }
-  }
-  return apiKey;
+  // API key is now handled server-side for security
+  // This function is kept for compatibility but always returns true
+  return 'server-side-handled';
 }
 
 // Load courses.json at startup for AI prompt
@@ -92,14 +59,13 @@ function hideLoading() {
 appendMessage('bot', 'Hello! I am your student calendar consultant. I can help you schedule activities, manage events, and export them to Google Calendar. Try saying "Add volleyball practice Thursday 7pm" or "export to google calendar"!');
 
 async function askChatGPT(message, calendar, options = {}) {
-  // Get API key from server, config, or prompt user
+  // API key is now handled securely server-side
   const apiKey = await getOpenAIApiKey();
   if (!apiKey) {
-    appendMessage('bot', '❌ OpenAI API key not configured. Please add your API key to use the chatbot.');
+    appendMessage('bot', '❌ Server configuration error. Please check the deployment.');
     return;
   }
   
-  const endpoint = 'https://api.openai.com/v1/chat/completions';
   const today = new Date();
   const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
   const maxDateStr = maxDate.toISOString().split('T')[0];
@@ -120,23 +86,27 @@ async function askChatGPT(message, calendar, options = {}) {
     'If the user mentions a weekday (e.g., Thursday), always use the specified current date as the reference and add the event to the next closest such weekday from today (never use a date before today), and repeat it only once (add one event).',
     'Do NOT provide any suggestions or advice.'
   ].join('\n');
-  const body = {
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: message }
-    ],
-    max_tokens: 500
-  };
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: message }
+  ];
+
   try {
-    const res = await fetch(endpoint, {
+    // Call our secure serverless function instead of OpenAI directly
+    const res = await fetch('/api/openai-key', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ messages })
     });
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(`API Error: ${errorData.error || 'Unknown error'}`);
+    }
+
     const data = await res.json();
     hideLoading();
     let botText = data.choices?.[0]?.message?.content || '';
