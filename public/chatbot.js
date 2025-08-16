@@ -842,3 +842,28 @@ function parseLocalDateTime(input) {
   const d = new Date(str);
   return isNaN(d) ? null : d;
 }
+
+// Send button logic - robust binding
+function bindSendControls() {
+  const inputEl = document.getElementById('chat-input');
+  const btnEl = document.getElementById('send-btn');
+  if (!btnEl || !inputEl) return;
+  if (btnEl.dataset.bound === '1') return; // prevent duplicate bindings
+
+  const onSend = () => {
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+    appendMessage('user', msg);
+    inputEl.value = '';
+    handleUserInput(msg, window.calendar);
+  };
+
+  btnEl.addEventListener('click', onSend);
+  inputEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') onSend();
+  });
+  btnEl.dataset.bound = '1';
+}
+
+// Bind send button controls on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', bindSendControls);
