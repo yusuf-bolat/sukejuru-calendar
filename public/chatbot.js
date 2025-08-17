@@ -57,6 +57,8 @@ function hideLoading() {
 
 // Session memory cache (merged with server memory)
 let sessionMemory = { activities: [] }
+// Pending draft for multi-turn general events
+let pendingDraft = { title: null }
 
 async function loadUserMemory() {
   if (!window.authSystem) return sessionMemory
@@ -77,6 +79,54 @@ function rememberActivity(type, name, startDate, endDate) {
   const idx = sessionMemory.activities.findIndex(a => a.type === type && a.name === name)
   if (idx >= 0) sessionMemory.activities[idx] = { type, name, schedule }
   else sessionMemory.activities.push({ type, name, schedule })
+}
+
+// Extract a likely activity title from a short user message
+function extractTitleFromMessage(msg) {
+  if (!msg) return null
+  let s = msg.trim()
+  // remove trailing punctuation
+  s = s.replace(/[.!?]$/,'').trim()
+  // common leading verbs
+  const patterns = [
+    /^i\s*(have|do|am\s*doing|want\s*to\s*add|want\s*to\s*schedule|wanna|schedule|add)\s+(.*)$/i,
+    /^(please\s*)?(add|schedule)\s+(.*)$/i,
+    /^it'?s\s+(.*)$/i
+  ]
+  for (const p of patterns) {
+    const m = s.match(p)
+    if (m) return (m[3] || m[2]).trim()
+  }
+  // if message has weekday or time only, return null
+  if (/(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(s)) return null
+  if (/(\d{1,2})(?::\d{2})?\s*(am|pm)|\d{1,2}:\d{2}/i.test(s)) return null
+  // single or two-word activity
+  return s.length <= 64 ? s : null
+}
+
+// Detect weekday name in text
+function detectWeekday(msg) {
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+  const found = days.find(d => new RegExp(d, 'i').test(msg))
+  return found || null
+}
+
+// Parse flexible time expressions like "from 3pm to 5pm", "3pm-5pm", "15:00 to 17:00"
+function parseTimeRangeFlexible(text) {
+  let m = text.match(/from\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+to\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i)
+  if (!m) m = text.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i)
+  if (!m) return null
+  const start = m[1].trim()
+  const end = m[2].trim()
+  // leverage existing parseTimeRange by building canonical string "start-end"
+  const r = parseTimeRange(`${start}-${end}`)
+  return r
+}
+
+function toHHMM(hour, minute){
+  const hh = String(hour).padStart(2,'0')
+  const mm = String(minute).padStart(2,'0')
+  return `${hh}:${mm}`
 }
 
 // Enhance system prompt with memory
@@ -177,8 +227,12 @@ async function askChatGPT(message, calendar, options = {}) {
       // If bot is asking for missing info, set pendingGeneralEvent
       if (!responded && botText && /specify|provide|what is|when do you/i.test(botText)) {
         pendingGeneralEvent = true;
+        // capture a draft title from the user message for next turn
+        const t = extractTitleFromMessage(message)
+        if (t) pendingDraft.title = t
       } else {
         pendingGeneralEvent = false;
+        pendingDraft.title = null;
       }
       
       // Check if AI returned course information (not a general event)
@@ -854,8 +908,49 @@ async function handleUserInput(msg, calendar) {
     }
     return;
   }
-  // If waiting for general event info, always pass to AI and skip course logic
+  // If waiting for general event info, try to combine with pending draft and schedule directly
   if (pendingGeneralEvent) {
+    // Try to parse weekday + time range from the user's reply
+    const weekday = detectWeekday(msg)
+    const tr = parseTimeRangeFlexible(msg) || null
+    if (pendingDraft.title && weekday && tr) {
+      const startTime = toHHMM(tr.startHour, tr.startMinute)
+      const endTime = toHHMM(tr.endHour, tr.endMinute)
+      const startDate = nextWeekdayDate(weekday, startTime)
+      const endDate = nextWeekdayDate(weekday, endTime)
+      try {
+        const saved = await window.authSystem.createEvent({
+          title: pendingDraft.title,
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          allDay: false,
+          backgroundColor: '#6f42c1',
+          description: ''
+        })
+        rememberActivity('general', saved.title, new Date(saved.start_date), new Date(saved.end_date))
+        try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+        calendar.addEvent({
+          id: saved.id,
+          title: saved.title,
+          start: saved.start_date,
+          end: saved.end_date,
+          allDay: saved.all_day,
+          backgroundColor: saved.color,
+          extendedProps: { description: saved.description }
+        })
+        appendMessage('bot', `Added ${saved.title} on ${weekday} ${startTime}-${endTime}.`)
+      } catch (e) {
+        console.warn('Direct schedule failed, falling back to AI:', e)
+        showLoading();
+        askChatGPT(msg, calendar, {isCourse: false});
+        return;
+      }
+      // clear pending state
+      pendingGeneralEvent = false
+      pendingDraft.title = null
+      return
+    }
+    // Fallback to AI if we cannot fully resolve
     showLoading();
     askChatGPT(msg, calendar, {isCourse: false});
     return;
