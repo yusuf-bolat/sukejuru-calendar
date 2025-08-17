@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Profile - Student Calendar</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin:0; background:#181818; color:#f2f2f2; }
+    .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+    .card { background:#222; border:1px solid #333; border-radius:10px; padding:18px; margin-top:18px; }
+    h1 { margin:0 0 6px; }
+    label { display:block; margin:12px 0 6px; color:#ddd; }
+    input, select { width:100%; padding:10px; border-radius:8px; border:1px solid #333; background:#1f1f1f; color:#eee; }
+    .actions { margin-top:16px; display:flex; gap:10px; }
+    button { background:#4fc3f7; color:#000; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; }
+    a { color:#4fc3f7; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Profile</h1>
+    <p>Manage your personal information.</p>
+
+    <div id="msg"></div>
+
+    <div class="card">
+      <label for="name">Full Name</label>
+      <input id="name" />
+
+      <label for="email">Email</label>
+      <input id="email" disabled />
+
+      <label for="university">University</label>
+      <input id="university" />
+
+      <label for="program">Program</label>
+      <input id="program" />
+
+      <label for="gradYear">Graduation Year</label>
+      <input id="gradYear" placeholder="e.g., 2027" />
+
+      <div class="actions">
+        <button id="saveBtn">Save</button>
+        <a href="index.html">Back to Calendar</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="supabase-auth.js"></script>
+  <script>
+    const msg = document.getElementById('msg');
+    function showMsg(text, ok=false){ msg.innerHTML = `<div class="card" style="border-color:${ok?'#2d5a27':'#333'}">${text}</div>`; }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      await new Promise(r=>setTimeout(r,500));
+      if (!authSystem.isLoggedIn()) { window.location.href='login.html'; return; }
+      try {
+        const profile = await authSystem.getUserProfile();
+        document.getElementById('name').value = profile?.name || '';
+        document.getElementById('email').value = profile?.email || '';
+        document.getElementById('university').value = profile?.university_name || '';
+        document.getElementById('program').value = profile?.program || '';
+        document.getElementById('gradYear').value = profile?.graduation_year || '';
+      } catch(e){ console.error(e); }
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      try {
+        const user = await authSystem.getCurrentUser();
+        const updates = {
+          name: document.getElementById('name').value.trim(),
+          university_name: document.getElementById('university').value.trim(),
+          program: document.getElementById('program').value.trim(),
+          graduation_year: document.getElementById('gradYear').value.trim(),
+          updated_at: new Date().toISOString()
+        };
+        const { data, error } = await authSystem.supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', user.id)
+          .select()
+          .single();
+        if (error) throw error;
+        showMsg('Saved successfully.', true);
+      } catch(e){ console.error(e); showMsg('Failed to save profile.'); }
+    });
+  </script>
+</body>
+</html>

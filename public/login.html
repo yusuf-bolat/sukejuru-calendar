@@ -344,10 +344,13 @@
           });
           
           if (result.needsConfirmation) {
-            showMessage(`Account created! Please check your email to confirm your account.`, 'success');
-            setTimeout(() => {
-              toggleAuthMode(); // Switch to login mode
-            }, 2000);
+            showMessage('Account created! A confirmation email was sent to your address. Please confirm your email.', 'success');
+            const btn = document.createElement('button');
+            btn.className = 'auth-button';
+            btn.textContent = 'Go to Login';
+            btn.onclick = () => { toggleAuthMode(); };
+            messageContainer.appendChild(btn);
+            return;
           } else {
             showMessage(`Account created successfully! Welcome, ${name}!`, 'success');
             setTimeout(() => {

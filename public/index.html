@@ -17,6 +17,9 @@
       box-sizing: border-box; 
       background: #181818; 
       color: #f2f2f2; 
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     
     /* Header Styles */
@@ -43,7 +46,7 @@
     .user-info {
       display: flex;
       align-items: center;
-      gap: 15px;
+      gap: 10px;
     }
     
     .user-welcome {
@@ -56,24 +59,26 @@
       color: #ffd700;
     }
     
-    .logout-btn {
+    .nav-btn, .logout-btn {
       background: rgba(255, 255, 255, 0.2);
       color: white;
       border: 1px solid rgba(255, 255, 255, 0.3);
-      padding: 8px 16px;
+      padding: 8px 12px;
       border-radius: 6px;
       cursor: pointer;
       font-size: 12px;
       transition: all 0.3s ease;
+      text-decoration: none;
     }
     
-    .logout-btn:hover {
+    .nav-btn:hover, .logout-btn:hover {
       background: rgba(255, 255, 255, 0.3);
       transform: translateY(-1px);
     }
     
     .main-content {
       padding: 0 24px;
+      flex: 1 1 auto;
     }
     
     #main-layout {
@@ -173,79 +178,13 @@
       background: linear-gradient(90deg, #1976d2 0%, #4fc3f7 100%);
       box-shadow: 0 4px 16px rgba(33,150,243,0.18);
     }
-    .chat-loading {
-      color: #4fc3f7;
-      font-style: italic;
-      padding: 8px 0;
-      font-size: 15px;
-    }
-    .chat-loading span {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      margin: 0 2px;
-      background: #4fc3f7;
-      border-radius: 100%;
-      animation: chat-loading-blink 1.4s infinite both;
-    }
-    @keyframes chat-loading-blink {
-      0%, 20% {
-        opacity: 1;
-      }
-      50% {
-        opacity: 0.2;
-      }
-      100% {
-        opacity: 1;
-      }
-    }
-    /* Google Calendar Styles */
-    .gcal-btn {
-      background: #4285f4;
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      font-size: 13px;
-      margin-left: 10px;
-      transition: background-color 0.3s;
-    }
-    .gcal-btn:hover {
-      background: #3367d6;
-    }
-    .gcal-btn:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-    .gcal-auth-section {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 15px;
-      padding-top: 15px;
-      border-top: 1px solid #333;
-    }
-    .gcal-signout-btn {
-      background: #dc3545;
-      color: white;
-      border: none;
-      padding: 4px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      margin-left: 10px;
-      transition: background-color 0.3s;
-    }
-    .gcal-signout-btn:hover {
-      background: #c82333;
-    }
-    #gcal-user-info {
-      display: flex;
-      align-items: center;
-    }
+    .chat-loading { color: #4fc3f7; font-style: italic; padding: 8px 0; font-size: 15px; }
+    .chat-loading span { display: inline-block; width: 8px; height: 8px; margin: 0 2px; background: #4fc3f7; border-radius: 100%; animation: chat-loading-blink 1.4s infinite both; }
+    @keyframes chat-loading-blink { 0%, 20% { opacity: 1; } 50% { opacity: 0.2; } 100% { opacity: 1; } }
+
+    /* Footer */
+    .site-footer { text-align:center; margin-top: 24px; padding: 16px 24px; color:#aaa; font-size:13px; border-top: 1px solid #333; }
+    .site-footer a { color:#4fc3f7; }
   </style>
 </head>
 <body>
@@ -256,6 +195,7 @@
       <div class="user-welcome">
         Welcome, <span class="user-name" id="user-name">Loading...</span>
       </div>
+      <a class="nav-btn" href="profile.html">Profile</a>
       <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
     </div>
   </div>
@@ -278,6 +218,11 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="site-footer">
+    <span>© 2025 Student Calendar • </span>
+    <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
   </div>
   <!-- Authentication -->
   <script src="supabase-auth.js"></script>
@@ -763,9 +708,5 @@
   </script>
   <!-- Google Identity Services Library -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <footer style="text-align:center;margin:20px 0;color:#aaa;font-size:13px;">
-    <span>© 2025 Student Calendar • </span>
-    <a href="privacy.html" target="_blank" rel="noopener" style="color:#4fc3f7;">Privacy Policy</a>
-  </footer>
 </body>
 </html>
