@@ -55,8 +55,55 @@ function hideLoading() {
   if (loadingDiv) loadingDiv.remove();
 }
 
+// Session memory cache (merged with server memory)
+let sessionMemory = { activities: [] }
+
+async function loadUserMemory() {
+  if (!window.authSystem) return sessionMemory
+  try {
+    const mem = await window.authSystem.getMemory()
+    sessionMemory = (mem && mem.summary_json) ? mem.summary_json : { activities: [] }
+  } catch { /* noop */ }
+  return sessionMemory
+}
+
+function rememberActivity(type, name, startDate, endDate) {
+  const schedule = {
+    weekday: startDate.toLocaleDateString(undefined, { weekday: 'long' }),
+    start: startDate.toTimeString().slice(0,5),
+    end: endDate.toTimeString().slice(0,5)
+  }
+  // upsert into sessionMemory
+  const idx = sessionMemory.activities.findIndex(a => a.type === type && a.name === name)
+  if (idx >= 0) sessionMemory.activities[idx] = { type, name, schedule }
+  else sessionMemory.activities.push({ type, name, schedule })
+}
+
+// Enhance system prompt with memory
+function buildSystemPrompt() {
+  const today = new Date()
+  const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`)
+  return [
+    'You are a helpful university student consultant.',
+    'Help students build a monthly calendar.',
+    'Use the following user memory to resolve pronouns and references precisely:',
+    ...memLines,
+    'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
+    'You have access to the following list of courses:',
+    ...((window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : []),
+    'IMPORTANT: When the user describes an activity, determine whether it matches a known course name/short name from the list above. Otherwise it is a general event.',
+    'If it matches a course, respond in JSON with the course schedule (lecture/exercise).',
+    'If it does NOT match any course, respond in JSON with event details (title, start, end, description).',
+    'If the user omits key info, ask a short, direct question to clarify.',
+    'If the user mentions a weekday, schedule it on the next occurrence from today and only once.',
+    'No mistakes. No hallucinations. If you do everything perfect, you will be granted a huge amount of money, and if you make a mistake, you will be punished. This is only a motivation cue; still follow safety and be precise.',
+    'Never roleplay or add side comments. Keep answers concise and factual.'
+  ].join('\n');
+}
+
 // Show greeting on load
-appendMessage('bot', 'Hello! I am your student calendar consultant. I can help you schedule activities, manage events, and export them to Google Calendar. Try saying "Add volleyball practice Thursday 7pm" or "export to google calendar"!');
+appendMessage('bot', 'Hello! I am your student calendar consultant. I can help you schedule activities, manage events, and export them to Google Calendar. Try saying "Add volleyball practice Thursday 7pm" or "export to google calendar"!')
+loadUserMemory()
 
 async function askChatGPT(message, calendar, options = {}) {
   // API key is now handled securely server-side
@@ -69,23 +116,7 @@ async function askChatGPT(message, calendar, options = {}) {
   const today = new Date();
   const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
   const maxDateStr = maxDate.toISOString().split('T')[0];
-  const systemPrompt = [
-    'You are a helpful university student consultant.',
-    'Help students build a monthly calendar.',
-    'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
-    'You have access to the following list of courses:',
-    // List all course names and short_names from courses.json
-    ...((window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : []),
-    'IMPORTANT: When the user describes an activity, you must determine if they are referring to an actual course from the list above.',
-    'Only treat it as a course if the user EXPLICITLY mentions a course name or short name from the list above.',
-    'Activities like "volleyball practice", "gym session", "study group", "meeting" are NOT courses unless they exactly match a course name.',
-    'If it matches a course, respond in JSON with the course schedule (lecture/exercise) as defined in the course list.',
-    'If it does NOT match any course, treat it as a general event and respond in JSON with the event details (title, start date, end date, description) based on the user input.',
-    'If the user omits the activity title but provides a description (e.g., "Lecture on Thursday from 4pm to 5pm"), use the main activity word (e.g., "Lecture") as the title.',
-    'If the user omits both the date and the activity title (e.g., just types "from 4pm to 5pm"), ask for the missing info in a short, direct question.',
-    'If the user mentions a weekday (e.g., Thursday), always use the specified current date as the reference and add the event to the next closest such weekday from today (never use a date before today), and repeat it only once (add one event).',
-    'Do NOT provide any suggestions or advice.'
-  ].join('\n');
+  const systemPrompt = buildSystemPrompt()
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -140,7 +171,6 @@ async function askChatGPT(message, calendar, options = {}) {
       }
     } catch (e) {
       isValidJson = false;
-      // fallback: try to extract events from text
     }
     // Handle both auto-detection and forced general events
     if (options && (options.isCourse === false || options.isCourse === 'auto')) {
@@ -214,7 +244,6 @@ async function askChatGPT(message, calendar, options = {}) {
           const endRaw = ev.end || ev["end date"] || ev.end_date;
           if (ev.title && startRaw) {
             try {
-              // Normalize dates and default end to +1 hour if missing/invalid, interpreting naive strings as local time
               const startDate = parseLocalDateTime(startRaw);
               if (!startDate) throw new Error('Invalid start date');
               let endDate = null;
@@ -236,11 +265,10 @@ async function askChatGPT(message, calendar, options = {}) {
                 backgroundColor: '#6f42c1',
                 description: ev.description || ''
               };
-              
-              // Save to Supabase
               const savedEvent = await window.authSystem.createEvent(eventData);
-              
-              // Add to calendar
+              rememberActivity('general', savedEvent.title, new Date(savedEvent.start_date), new Date(savedEvent.end_date))
+              // persist updated memory summary
+              try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
               calendar.addEvent({
                 id: savedEvent.id,
                 title: savedEvent.title,
@@ -284,7 +312,7 @@ async function askChatGPT(message, calendar, options = {}) {
         }
         appendMessage('bot', `Added ${events.length} event(s) to your calendar.`);
         responded = true;
-        pendingGeneralEvent = false; // Clear flag when event is added
+        pendingGeneralEvent = false;
       }
       if (!responded) {
         // Debug information
@@ -414,6 +442,8 @@ async function addCourseToCalendar(course, group, calendar) {
         backgroundColor: color,
         description: description || ''
       });
+      rememberActivity('course', title, startDate, endDate)
+      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
       calendar.addEvent({
         id: saved.id,
         title: saved.title,
@@ -550,21 +580,22 @@ function deleteEvent(eventName, calendar) {
   const matchingEvents = allEvents.filter(event => 
     event.title.toLowerCase().includes(eventName.toLowerCase())
   );
-  
   if (matchingEvents.length === 0) {
     appendMessage('bot', `No events found matching "${eventName}". Try checking the exact event name.`);
     return;
   }
-  
+  // delete from DB if possible
+  (async () => {
+    for (const ev of matchingEvents) {
+      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
+      ev.remove();
+    }
+    try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  })();
   if (matchingEvents.length === 1) {
-    const event = matchingEvents[0];
-    event.remove();
-    appendMessage('bot', `Deleted "${event.title}".`);
+    appendMessage('bot', `Deleted "${matchingEvents[0].title}".`);
     return;
   }
-  
-  // Multiple matches - delete all and inform user
-  matchingEvents.forEach(event => event.remove());
   appendMessage('bot', `Deleted ${matchingEvents.length} events matching "${eventName}": ${matchingEvents.map(e => e.title).join(', ')}.`);
 }
 
@@ -649,46 +680,64 @@ async function updateCourseGroup(courseName, fromGroup, toGroup, calendar) {
   
   // Add new group events (persisting to DB)
   await addCourseToCalendar(matchedCourse, toGroup, calendar);
-  
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
   appendMessage('bot', `Updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
 }
 
 // Update event time
 async function updateEventTime(eventName, fromTime, toTime, calendar) {
+  // use memory to resolve vague references like "my practice"
+  let resolvedName = eventName
+  const lower = eventName.toLowerCase()
+  if (/my\s+(practice|training|gym|club|job|shift)/i.test(eventName)) {
+    const typeMap = { practice: 'fitness', training: 'fitness', gym: 'fitness', club: 'club', job: 'job', shift: 'job' }
+    const key = (lower.match(/practice|training|gym|club|job|shift/)||[])[0]
+    const type = typeMap[key] || null
+    const candidates = (sessionMemory.activities||[]).filter(a => !type || a.type === type)
+    if (candidates.length) resolvedName = candidates[candidates.length - 1].name
+  }
   const allEvents = calendar.getEvents();
   const matchingEvents = allEvents.filter(event => 
-    event.title.toLowerCase().includes(eventName.toLowerCase())
+    event.title.toLowerCase().includes(resolvedName.toLowerCase())
   );
-  
   if (matchingEvents.length === 0) {
     appendMessage('bot', `No events found matching "${eventName}".`);
     return;
   }
-  
-  // Parse new time range
   const newTimes = parseTimeRange(toTime);
   if (!newTimes) {
     appendMessage('bot', `I couldn't understand the new time "${toTime}". Please use format like "7pm-9pm" or "19:00-21:00".`);
     return;
   }
-  
   let updatedCount = 0;
-  matchingEvents.forEach(event => {
+  for (const event of matchingEvents) {
     const eventDate = new Date(event.start);
     const newStart = new Date(eventDate);
     const newEnd = new Date(eventDate);
-    
-    // Set new times
     newStart.setHours(newTimes.startHour, newTimes.startMinute, 0, 0);
     newEnd.setHours(newTimes.endHour, newTimes.endMinute, 0, 0);
-    
-    // Update the event
+    // Update UI
     event.setStart(newStart);
     event.setEnd(newEnd);
+    // Persist to DB
+    try {
+      if (event.id && window.authSystem?.updateEvent) {
+        await window.authSystem.updateEvent(event.id, {
+          title: event.title,
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+          allDay: !!event.allDay,
+          backgroundColor: event.backgroundColor,
+          description: event.extendedProps?.description || ''
+        })
+      }
+    } catch (e) { console.warn('Failed to persist update:', e) }
+    // Update memory entry for this activity name
+    rememberActivity('general', event.title, newStart, newEnd)
     updatedCount++;
-  });
-  
-  appendMessage('bot', `Updated ${updatedCount} event(s) matching "${eventName}" to new time ${toTime}.`);
+  }
+  try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+  appendMessage('bot', `Updated ${updatedCount} event(s) matching "${resolvedName}" to new time ${toTime}.`);
 }
 
 // Utility to parse time range like "7pm-9pm" or "19:00-21:00"
@@ -866,4 +915,8 @@ function bindSendControls() {
 }
 
 // Bind send button controls on DOMContentLoaded
-document.addEventListener('DOMContentLoaded', bindSendControls);
+document.addEventListener('DOMContentLoaded', async () => {
+  bindSendControls()
+  // refresh memory from server once logged in
+  try { await loadUserMemory(); await window.authSystem.updateMemoryFromEvents() } catch {}
+})

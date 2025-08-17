@@ -26,9 +26,17 @@ create table events (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- User memory summary to store key activities per user
+create table if not exists user_memory (
+  user_id uuid primary key references auth.users on delete cascade,
+  summary_json jsonb not null default '{"activities":[]}'::jsonb,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- Enable Row Level Security (RLS)
 alter table profiles enable row level security;
 alter table events enable row level security;
+alter table user_memory enable row level security;
 
 -- Profiles policies
 create policy "Users can view own profile" 
@@ -58,6 +66,19 @@ create policy "Users can update own events"
 
 create policy "Users can delete own events" 
   on events for delete 
+  using (auth.uid() = user_id);
+
+-- User memory policies
+create policy if not exists "Users can view own memory"
+  on user_memory for select
+  using (auth.uid() = user_id);
+
+create policy if not exists "Users can insert own memory"
+  on user_memory for insert
+  with check (auth.uid() = user_id);
+
+create policy if not exists "Users can update own memory"
+  on user_memory for update
   using (auth.uid() = user_id);
 
 -- Function to handle user profile creation

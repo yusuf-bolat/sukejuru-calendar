@@ -265,6 +265,81 @@ class SupabaseAuth {
       )
       .subscribe()
   }
+
+  // User Memory Methods
+  async getMemory() {
+    await this.waitForReady()
+    const user = await this.getCurrentUser()
+    if (!user) throw new Error('Not authenticated')
+    try {
+      const { data, error } = await this.supabase
+        .from('user_memory')
+        .select('*')
+        .eq('user_id', user.id)
+        .single()
+      if (error && error.code !== 'PGRST116') throw error // PGRST116 = No rows
+      return data || { user_id: user.id, summary_json: { activities: [] } }
+    } catch (e) {
+      console.error('getMemory error:', e)
+      return { user_id: user.id, summary_json: { activities: [] } }
+    }
+  }
+
+  async upsertMemory(summaryJson) {
+    await this.waitForReady()
+    const user = await this.getCurrentUser()
+    if (!user) throw new Error('Not authenticated')
+    const payload = {
+      user_id: user.id,
+      summary_json: summaryJson,
+      updated_at: new Date().toISOString()
+    }
+    const { data, error } = await this.supabase
+      .from('user_memory')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  }
+
+  // Infer simple activities from events and update memory
+  async updateMemoryFromEvents() {
+    try {
+      const events = await this.getEvents()
+      const activities = []
+      const addAct = (type, name, schedule) => {
+        // dedupe by type+name
+        if (!activities.some(a => a.type === type && a.name === name)) {
+          activities.push({ type, name, schedule })
+        }
+      }
+      for (const ev of events) {
+        const title = (ev.title || '').toLowerCase()
+        const start = new Date(ev.start_date)
+        const end = new Date(ev.end_date)
+        const schedule = {
+          weekday: start.toLocaleDateString(undefined, { weekday: 'long' }),
+          start: start.toTimeString().slice(0,5),
+          end: end.toTimeString().slice(0,5)
+        }
+        if (/job|shift|work|part\s*time/i.test(title)) addAct('job', ev.title, schedule)
+        if (/club|society/i.test(title)) addAct('club', ev.title, schedule)
+        if (/gym|fitness|workout|practice|training/i.test(title)) addAct('fitness', ev.title, schedule)
+        // heuristic for courses: short code pattern like ABC123 or words like Lecture/Exercise
+        if (/lecture|exercise|seminar|tutorial|lab/i.test(title) || /[A-Z]{2,}\d{2,}/.test(ev.title)) {
+          addAct('course', ev.title, schedule)
+        }
+      }
+      const memory = await this.getMemory()
+      memory.summary_json = { activities }
+      await this.upsertMemory(memory.summary_json)
+      return memory.summary_json
+    } catch (e) {
+      console.warn('updateMemoryFromEvents failed:', e)
+      return null
+    }
+  }
 }
 
 // Global auth instance
