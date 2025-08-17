@@ -243,11 +243,13 @@
     const customProgramGroup = document.getElementById('customProgramGroup');
     const customProgramInput = document.getElementById('customProgram');
 
-    function showMessage(message, type = 'error') {
+    function showMessage(message, type = 'error', persist = false) {
       messageContainer.innerHTML = `<div class="${type}-message">${message}</div>`;
-      setTimeout(() => {
-        messageContainer.innerHTML = '';
-      }, 5000);
+      if (!persist) {
+        setTimeout(() => {
+          messageContainer.innerHTML = '';
+        }, 5000);
+      }
     }
 
     function toggleAuthMode() {
@@ -344,11 +346,18 @@
           });
           
           if (result.needsConfirmation) {
-            showMessage('Account created! A confirmation email was sent to your address. Please confirm your email.', 'success');
+            // Hide form and toggle, show persistent success message + login button
+            authTitle.textContent = '📩 Check your email';
+            authSubtitle.textContent = `We sent a confirmation link to ${email}. Please confirm to activate your account.`;
+            authForm.style.display = 'none';
+            document.querySelector('.auth-toggle').style.display = 'none';
+
+            showMessage('Account created! A confirmation email was sent to your address. After confirming, click the button below to sign in.', 'success', true);
+
             const btn = document.createElement('button');
             btn.className = 'auth-button';
             btn.textContent = 'Go to Login';
-            btn.onclick = () => { toggleAuthMode(); };
+            btn.onclick = () => { window.location.href = 'login.html'; };
             messageContainer.appendChild(btn);
             return;
           } else {
