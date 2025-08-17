@@ -58,7 +58,8 @@
       font-size: 14px;
     }
 
-    .form-group input {
+    .form-group input,
+    .form-group select {
       width: 100%;
       padding: 12px 16px;
       border: 2px solid #e1e5e9;
@@ -69,7 +70,8 @@
       box-sizing: border-box;
     }
 
-    .form-group input:focus {
+    .form-group input:focus,
+    .form-group select:focus {
       border-color: #667eea;
     }
 
@@ -170,6 +172,35 @@
         <input type="password" id="password" placeholder="Enter your password" required />
       </div>
 
+      <div id="extra-fields" style="display:none;">
+        <div class="form-group">
+          <label for="universityName">University</label>
+          <select id="universityName">
+            <option value="">Select university</option>
+            <option value="Kyoto University of Advanced Science">Kyoto University of Advanced Science</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-group" id="customUniversityGroup" style="display:none;">
+          <label for="customUniversity">Your University Name</label>
+          <input type="text" id="customUniversity" placeholder="Type your university name" />
+        </div>
+        <div class="form-group" id="programGroup">
+          <label for="program">Program</label>
+          <select id="program">
+            <option value="">Select program</option>
+          </select>
+        </div>
+        <div class="form-group" id="customProgramGroup" style="display:none;">
+          <label for="customProgram">Program (if not listed)</label>
+          <input type="text" id="customProgram" placeholder="Type your program" />
+        </div>
+        <div class="form-group">
+          <label for="graduationYear">Expected Graduation Year</label>
+          <input type="text" id="graduationYear" placeholder="e.g., 2027" pattern="^\d{4}$" />
+        </div>
+      </div>
+
       <button type="submit" class="auth-button" id="auth-submit">Sign In</button>
     </form>
 
@@ -177,6 +208,10 @@
       <p id="toggle-text">Don't have an account?</p>
       <button type="button" id="toggle-button">Create Account</button>
     </div>
+    <p style="margin-top:16px;font-size:12px;color:#666;">
+      By using this app, you agree to our
+      <a href="privacy.html" target="_blank" rel="noopener" style="color:#667eea;">Privacy Policy</a>.
+    </p>
   </div>
 
   <script src="supabase-auth.js"></script>
@@ -197,6 +232,16 @@
     const nameInput = document.getElementById('name');
     const emailInput = document.getElementById('email');
     const passwordInput = document.getElementById('password');
+    const yearOfStudyInput = document.getElementById('yearOfStudy');
+    const graduationYearInput = document.getElementById('graduationYear');
+    const facultyInput = document.getElementById('faculty');
+    const extraFields = document.getElementById('extra-fields');
+    const universitySelect = document.getElementById('universityName');
+    const customUniversityGroup = document.getElementById('customUniversityGroup');
+    const customUniversityInput = document.getElementById('customUniversity');
+    const programSelect = document.getElementById('program');
+    const customProgramGroup = document.getElementById('customProgramGroup');
+    const customProgramInput = document.getElementById('customProgram');
 
     function showMessage(message, type = 'error') {
       messageContainer.innerHTML = `<div class="${type}-message">${message}</div>`;
@@ -216,6 +261,7 @@
         toggleText.textContent = "Don't have an account?";
         toggleButton.textContent = 'Create Account';
         nameGroup.style.display = 'none';
+        extraFields.style.display = 'none';
         nameInput.required = false;
       } else {
         // Switch to register mode
@@ -225,6 +271,7 @@
         toggleText.textContent = 'Already have an account?';
         toggleButton.textContent = 'Sign In';
         nameGroup.style.display = 'block';
+        extraFields.style.display = 'block';
         nameInput.required = true;
       }
 
@@ -250,6 +297,26 @@
         return;
       }
 
+      if (!isLoginMode) {
+        if (!universitySelect.value) {
+          showMessage('Please select your university');
+          return;
+        }
+        if (universitySelect.value === 'Other' && !customUniversityInput.value.trim()) {
+          showMessage('Please enter your university name');
+          return;
+        }
+        const finalProgram = programSelect.value || customProgramInput.value.trim();
+        if (!finalProgram) {
+          showMessage('Please select or enter your program');
+          return;
+        }
+        if (graduationYearInput.value && !/^\d{4}$/.test(graduationYearInput.value)) {
+          showMessage('Graduation year must be 4 digits, e.g., 2027');
+          return;
+        }
+      }
+
       // Disable form during processing
       authSubmit.disabled = true;
       authSubmit.textContent = isLoginMode ? 'Signing In...' : 'Creating Account...';
@@ -268,7 +335,13 @@
           }, 1000);
         } else {
           // Register
-          const result = await authSystem.signUp(email, password, name);
+          const finalUniversityName = universitySelect.value === 'Other' ? customUniversityInput.value.trim() : universitySelect.value;
+          const finalProgram = programSelect.value || customProgramInput.value.trim();
+          const result = await authSystem.signUp(email, password, name, {
+            university_name: finalUniversityName,
+            graduation_year: graduationYearInput.value,
+            program: finalProgram
+          });
           
           if (result.needsConfirmation) {
             showMessage(`Account created! Please check your email to confirm your account.`, 'success');
@@ -291,6 +364,50 @@
         document.querySelector('.auth-container').classList.remove('loading');
       }
     }
+
+    // Update program options based on university selection
+    function setProgramOptionsForUniversity(university) {
+      // Clear existing options
+      programSelect.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Select program';
+      programSelect.appendChild(placeholder);
+
+      if (university === 'Kyoto University of Advanced Science') {
+        ['Business and Global Economics', 'Bioenvironmental', 'Mechanical and Electrical Engineering']
+          .forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            programSelect.appendChild(opt);
+          });
+        customProgramGroup.style.display = 'none';
+        customProgramInput.required = false;
+      } else if (university === 'Other') {
+        // No predefined list; require manual program entry
+        customProgramGroup.style.display = 'block';
+        customProgramInput.required = true;
+      } else {
+        customProgramGroup.style.display = 'none';
+        customProgramInput.required = false;
+      }
+    }
+
+    // Toggle visibility of custom university field and reset program list
+    universitySelect?.addEventListener('change', () => {
+      if (universitySelect.value === 'Other') {
+        customUniversityGroup.style.display = 'block';
+        customUniversityInput.required = true;
+      } else {
+        customUniversityGroup.style.display = 'none';
+        customUniversityInput.required = false;
+      }
+      setProgramOptionsForUniversity(universitySelect.value);
+    });
+
+    // Initialize program options when page loads in register mode
+    setProgramOptionsForUniversity('');
 
     // Event listeners
     toggleButton.addEventListener('click', toggleAuthMode);

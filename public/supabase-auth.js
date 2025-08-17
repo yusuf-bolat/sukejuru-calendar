@@ -47,7 +47,7 @@ class SupabaseAuth {
     }
   }
 
-  async signUp(email, password, name) {
+  async signUp(email, password, name, extra = {}) {
     await this.waitForReady()
     console.log('Starting signup process...')
     
@@ -58,7 +58,10 @@ class SupabaseAuth {
         password,
         options: {
           data: {
-            name: name
+            name: name,
+            program: extra.program || null,
+            graduation_year: extra.graduation_year || null,
+            university_name: extra.university_name || null
           }
         }
       })

@@ -2,6 +2,7 @@
   {
     "course": "Ordinary Differential Equations",
     "short_name": "ODE",
+    "semester": 3,
     "lecture": [
       ["Martin SERA", "Monday", "10:40", "12:10"]
     ],
@@ -12,6 +13,7 @@
   {
     "course": "Mechanics of Materials",
     "short_name": "MoM",
+    "semester": 3,
     "lecture": [
       ["MATSUMOTO Ryosuke", "Tuesday", "10:40", "12:10"]
     ],
@@ -22,6 +24,7 @@
   {
     "course": "Introduction to C Programming",
     "short_name": "C Prog",
+    "semester": 3,
     "lecture": {
       "Group A": [["Ian PIUMARTA", "Monday", "13:00", "14:30"]],
       "Group B": [["Ian PIUMARTA", "Thursday", "13:00", "14:30"]]
@@ -34,6 +37,7 @@
   {
     "course": "Electromagnetic Theory",
     "short_name": "EMT",
+    "semester": 3,
     "lecture": [
       ["IMAI Tadayuki", "Tuesday", "13:00", "14:30"]
     ],
@@ -44,6 +48,7 @@
   {
     "course": "Exercise for Machine Shop Practice",
     "short_name": "Machine Shop",
+    "semester": 3,
     "lecture": [],
     "exercise": {
       "Group A": [
@@ -61,6 +66,7 @@
   {
     "course": "Sports & Life Skills 4",
     "short_name": "SLS 4",
+    "semester": 3,
     "lecture": [
       ["Unknown", "Wednesday", "9:00", "10:30"]
     ],
@@ -69,6 +75,7 @@
   {
     "course": "Comprehensive Japanese 1",
     "short_name": "Japanese",
+    "semester": 3,
     "lecture": [
       ["Unknown", "Tuesday", "14:40", "16:10"]
     ],
@@ -77,6 +84,7 @@
   {
     "course": "Business Japanese 1",
     "short_name": "Biz Japanese",
+    "semester": 3,
     "lecture": {
       "5th period group": [["Unknown", "Wednesday", "16:20", "17:50"]]
     },
@@ -85,6 +93,7 @@
   {
     "course": "Fundamentals of Electrical Motors",
     "short_name": "Elec Motors",
+    "semester": 3,
     "lecture": [
       ["Fuat KUÇUK", "Thursday", "10:40", "12:10"]
     ],
@@ -93,6 +102,7 @@
   {
     "course": "Discussions/Newspaper Reading",
     "short_name": "Disc/News Japanese",
+    "semester": 3,
     "lecture": [
       ["Unknown", "Friday", "14:40", "16:10"]
     ],
@@ -101,6 +111,7 @@
   {
     "course": "Career Design",
     "short_name": "Career",
+    "semester": 3,
     "lecture": [
       ["Osamu TABATA", "Friday", "16:20", "17:50"]
     ],
@@ -109,36 +120,42 @@
   {
     "course": "Modern Control Engineering",
     "short_name": "MCE",
+    "semester": 5,
     "lecture": [["Unknown", "Monday", "10:40", "12:10"]],
     "exercise": []
   },
   {
     "course": "Introduction to Scientific Measurement",
     "short_name": "ISM",
+    "semester": 5,
     "lecture": [["Unknown", "Tuesday", "10:40", "12:10"]],
     "exercise": []
   },
   {
     "course": "Fourier Analysis and Partial Differential Equations",
     "short_name": "FAPDE",
+    "semester": 5,
     "lecture": [["Martin SERA", "Wednesday", "10:40", "12:10"]],
     "exercise": [["Martin SERA", "Friday", "10:40", "12:10"]]
   },
   {
     "course": "Introduction to Production Engineering",
     "short_name": "IPE",
+    "semester": 5,
     "lecture": [["Unknown", "Thursday", "10:40", "12:10"]],
     "exercise": []
   },
   {
     "course": "Introduction to Electrochemistry",
     "short_name": "Electrochem",
+    "semester": 5,
     "lecture": [["Nishi MASAYUKI", "Monday", "13:00", "14:30"]],
     "exercise": []
   },
   {
     "course": "Digital Signal Processing",
     "short_name": "DSP",
+    "semester": 5,
     "lecture": {
       "Group A": [["Unknown", "Tuesday", "13:00", "14:30"]],
       "Group B": [["Unknown", "Friday", "13:00", "14:30"]]
@@ -151,6 +168,7 @@
   {
     "course": "Mechatronics Laboratory (Energy)",
     "short_name": "MechLab(E)",
+    "semester": 5,
     "lecture": [],
     "exercise": {
         "Group A": [["Unknown", "Friday", "13:00", "14:30"], 
@@ -164,6 +182,7 @@
   {
     "course": "Pre-Capstone Project 2",
     "short_name": "PreCap 2",
+    "semester": 5,
     "lecture": [["Unknown", "Wednesday", "13:00", "14:30"], 
                 ["Unknown", "Wednesday", "14:40", "16:10"]],
     "exercise": []
@@ -171,18 +190,21 @@
   {
     "course": "Introduction to Robotic Manipulators",
     "short_name": "RobManip",
+    "semester": 5,
     "lecture": [["Unknown", "Thursday", "13:00", "14:30"]],
     "exercise": []
   },
   {
     "course": "Analog Electronic Circuits",
     "short_name": "AEC",
+    "semester": 5,
     "lecture": [["Unknown", "Monday", "14:40", "16:10"]],
     "exercise": []
   },
   {
     "course": "Power Electronic Engineering",
     "short_name": "PEE",
+    "semester": 5,
     "lecture": [["Unknown", "Thursday", "14:40", "16:10"]],
     "exercise": []
   }
