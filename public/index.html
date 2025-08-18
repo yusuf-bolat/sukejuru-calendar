@@ -392,10 +392,16 @@
           center: 'title',
           right: 'dayGridMonth,timeGridWeek,timeGridDay'
         },
+        slotMinTime: '08:00:00', // hide 00:00–08:00 by default
         editable: true,
         selectable: true,
         eventResizableFromStart: true,
         events: events,
+        // Recalculate visible start time when view changes
+        datesSet: function() { updateSlotMinTimeForWeek(); },
+        eventAdd: function() { updateSlotMinTimeForWeek(); },
+        eventChange: function() { updateSlotMinTimeForWeek(); },
+        eventRemove: function() { updateSlotMinTimeForWeek(); },
         
         select: async function(info) {
           const title = prompt('Enter event title:');
@@ -491,6 +497,41 @@
       });
       
       calendar.render();
+      
+      // Dynamically hide midnight–8am unless early events exist in the week
+      function updateSlotMinTimeForWeek() {
+        try {
+          const view = calendar.view;
+          const rangeStart = view.activeStart;
+          const rangeEnd = view.activeEnd;
+          let earliest = null;
+          const evs = calendar.getEvents();
+          for (const ev of evs) {
+            const s = new Date(ev.start);
+            if (s >= rangeStart && s < rangeEnd) {
+              if (!earliest || s < earliest) earliest = s;
+            }
+          }
+          const defaultMin = '08:00:00';
+          if (!earliest) {
+            calendar.setOption('slotMinTime', defaultMin);
+            return;
+          }
+          const minutes = earliest.getHours() * 60 + earliest.getMinutes();
+          if (minutes < 8 * 60) {
+            // Floor to the start of the hour for a clean grid start
+            const flooredHour = String(Math.max(0, earliest.getHours())).padStart(2, '0');
+            calendar.setOption('slotMinTime', `${flooredHour}:00:00`);
+          } else {
+            calendar.setOption('slotMinTime', defaultMin);
+          }
+        } catch (e) {
+          console.warn('updateSlotMinTimeForWeek failed:', e);
+        }
+      }
+      
+      // Run once after initial render
+      updateSlotMinTimeForWeek();
       
       // Expose calendar for chatbot.js
       window.calendar = calendar;

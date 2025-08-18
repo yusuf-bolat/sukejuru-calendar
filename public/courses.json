@@ -63,7 +63,7 @@
     "semester": 3,
     "level": "core",
     "lecture_credits": 0,
-    "exercise_credits": 3,
+    "exercise_credits": 1,
     "lecture": [],
     "exercise": {
       "Group A": [
@@ -222,7 +222,7 @@
     "semester": 5,
     "level": "advanced",
     "lecture_credits": 0,
-    "exercise_credits": 3,
+    "exercise_credits": 1,
     "lecture": [],
     "exercise": {
         "Group A": [["Unknown", "Friday", "13:00", "14:30"], 
