@@ -337,42 +337,88 @@ function parseProductive(s) {
   return null;
 }
 
-// Parse user-provided priority order like "clubs > study > job > project".
-// Returns an ordered array of keys limited to availableKeys.
+// Extract includes/excludes from natural text like
+// "i want to pick mechlab energy. avoid any course related to chemistry"
+function parseCoursePrefsNatural(text) {
+  const t = String(text||'');
+  const include = [];
+  const exclude = [];
+
+  // Excludes: look for "avoid ...", "except ...", "no ...", "not ..."
+  const exclMatch = t.match(/\b(avoid|except|no(?:t)?\s+take|not\s+include|without)\b([^\.;\n]*)/i);
+  if (exclMatch) {
+    let exclRaw = exclMatch[2] || '';
+    // handle phrases like "related to chemistry"
+    exclRaw = exclRaw.replace(/.*related to\s+/i, '');
+    exclRaw.split(/,| and | or |\/|;|\s+&\s+/i).map(s=>s.trim()).filter(Boolean).forEach(x => exclude.push(x));
+  }
+
+  // Includes: verbs pointing to choices
+  const inclMatches = t.match(/\b(pick|take|choose|enroll(?:\s+in)?|register(?:\s+for)?|want\s+to\s+take|want\s+to\s+pick|want\s+to\s+choose)\b([^\.;\n]*)/ig) || [];
+  for (const m of inclMatches) {
+    const m2 = m.replace(/^(?:pick|take|choose|enroll(?:\s+in)?|register(?:\s+for)?|want\s+to\s+take|want\s+to\s+pick|want\s+to\s+choose)\b/i,'')
+    m2.split(/,| and | or |\/|;|\s+&\s+/i).map(s=>s.trim()).filter(Boolean).forEach(x => include.push(x));
+  }
+
+  // Fallback: if sentence starts with "i want" then grab next noun-ish chunk
+  if (!include.length) {
+    const m = t.match(/i\s+want\s+(?:to\s+)?(?:pick|take|choose)?\s*([^\.;\n]+)/i);
+    if (m && m[1]) include.push(m[1].trim());
+  }
+
+  // Clean noise words
+  const clean = (arr) => arr.map(s => s.replace(/^(?:any|the|a|an)\s+/i,'').trim()).filter(Boolean);
+  return { include: clean(include), exclude: clean(exclude) };
+}
+
+// Parse user-provided priority order with tolerant natural language, e.g.,
+// "first priority is club, then study and then part time job" or "clubs > study > job"
 function parsePriorities(input, availableKeys = []) {
-  const norm = (s) => String(s||'').trim().toLowerCase();
-  const text = norm(input);
-  if (!text || /^(default|skip|no|none)$/i.test(input||'')) {
-    // default order
-    const defaultOrder = ['clubs','study','job','project'];
-    return defaultOrder.filter(k => availableKeys.includes(k));
+  const text = String(input||'').toLowerCase();
+  const keys = ['clubs','study','job','project'];
+  const synonyms = {
+    clubs: [/\bclub(s)?\b/, /\bactivity|activities\b/, /\bsoccer|basketball|volley|tennis|music|band|art\b/],
+    study: [/\bstudy|studying|revision|reading\b/],
+    job: [/\bjob|work|shift|part\s*-?\s*time|baito\b/],
+    project: [/\bproject|research|thesis|capstone|lab work\b/]
+  };
+
+  // 1) Try explicit separators first
+  const sepSplit = text.split(/>|,|->|→|→| then | after /i).map(s=>s.trim()).filter(Boolean);
+  const resolved1 = [];
+  if (sepSplit.length) {
+    for (let part of sepSplit) {
+      for (const k of keys) {
+        if (synonyms[k].some(rx => rx.test(part))) {
+          if (!resolved1.includes(k)) resolved1.push(k);
+          break;
+        }
+      }
+    }
   }
-  // split on common separators
-  const parts = text
-    .split(/>|,|->|→|then|than|>/i)
-    .map(s => norm(s))
-    .filter(Boolean);
-  const map = new Map([
-    ['club','clubs'], ['activity','clubs'], ['activities','clubs'],
-    ['job','job'], ['work','job'], ['part-time','job'], ['part time','job'], ['shift','job'],
-    ['study','study'], ['studying','study'],
-    ['project','project'], ['research','project'], ['thesis','project'], ['capstone','project']
-  ]);
-  const resolved = [];
-  for (let p of parts) {
-    // normalize multi-word tokens
-    p = p.replace(/\s+/g, ' ');
-    if (map.has(p)) p = map.get(p);
-    if (!['clubs','study','job','project'].includes(p)) continue;
-    if (!resolved.includes(p)) resolved.push(p);
-  }
-  // append any missing available keys in a stable default order
+
+  // 2) Fallback: order by first occurrence in text
+  const resolved2 = Object.entries(synonyms)
+    .map(([k, arr]) => ({ k, idx: arr.reduce((min, rx) => {
+      const m = text.match(rx);
+      const i = m ? text.indexOf(m[0]) : -1;
+      return (i >= 0 && (min === -1 || i < min)) ? i : min;
+    }, -1) }))
+    .filter(o => o.idx >= 0)
+    .sort((a,b) => a.idx - b.idx)
+    .map(o => o.k);
+
+  let order = resolved1.length ? resolved1 : resolved2;
+  // De-dup and enforce availability
+  const seen = new Set();
+  order = order.filter(k => availableKeys.includes(k) && !seen.has(k) && (seen.add(k) || true));
+
+  // Append any missing available keys using a sensible default order
   const defaultOrder = ['clubs','study','job','project'];
   for (const k of defaultOrder) {
-    if (availableKeys.includes(k) && !resolved.includes(k)) resolved.push(k);
+    if (availableKeys.includes(k) && !order.includes(k)) order.push(k);
   }
-  // filter to available
-  return resolved.filter(k => availableKeys.includes(k));
+  return order;
 }
 
 async function startScheduleWizard(calendar) {
@@ -399,8 +445,11 @@ async function startScheduleWizard(calendar) {
 async function handleScheduleWizardAnswer(msg, calendar) {
   const wiz = scheduleWizard;
   if (!wiz.active) return false;
-  const semBase = wiz.data.baseSemester;
-  switch (wiz.step) {
+  // Normalize message for step-specific intents (lightweight NLU)
+  const step = wiz.step;
+  const msgNorm = String(msg||'').trim();
+
+  switch (step) {
     case 'confirmSemester': {
       const yn = parseYesNo(msg);
       if (yn === true) { wiz.step = 'askPrefsCourses'; appendMessage('bot', 'Any must-take or avoid courses? If none, say "none".'); return true; }
@@ -414,18 +463,11 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       return true;
     }
     case 'askPrefsCourses': {
-      const t = (msg||'').trim();
-      if (/none/i.test(t)) {
+      const t = msgNorm;
+      if (/^none?$/i.test(t)) {
         wiz.data.coursePrefs = { include: [], exclude: [] };
       } else {
-        // simple parsing: "+X" to include, "-Y" to exclude, plain names treated as include
-        const parts = t.split(/,|;| and /i).map(s=>s.trim()).filter(Boolean);
-        const include = [];
-        const exclude = [];
-        for (const p of parts) {
-          if (/^-/.test(p)) exclude.push(p.replace(/^[-+]/,''));
-          else include.push(p.replace(/^[-+]/,''));
-        }
+        const { include, exclude } = parseCoursePrefsNatural(t);
         wiz.data.coursePrefs = { include, exclude };
       }
       wiz.step = 'askJob';
@@ -514,9 +556,8 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       return true;
     }
     case 'askCredits': {
-      const n = parseNumber(msg) || 18;
+      const n = parseNumber(msgNorm) || 18;
       wiz.data.targetCredits = n;
-      // Ask priorities for non-course activities
       wiz.step = 'askPriorities';
       const available = [];
       if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
@@ -533,7 +574,9 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       available.push('study');
       if (wiz.data.hasJob) available.push('job');
       if (wiz.data.hasProject) available.push('project');
-      wiz.data.priorities = parsePriorities(msg, available);
+      wiz.data.priorities = parsePriorities(msgNorm, available);
+      // Brief confirmation in canonical form
+      try { appendMessage('bot', `Understood — priorities: ${wiz.data.priorities.join(' > ')}.`); } catch {}
       wiz.step = 'generate';
       appendMessage('bot', 'Great — give me a moment to put this together.');
       generateTwoWeekSchedule(wiz, calendar);
@@ -661,8 +704,11 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     ? wiz.data.priorities.filter(k => available.includes(k))
     : ['clubs','study','job','project'].filter(k => available.includes(k));
 
+  // Safety: if still empty, fall back to study then job then clubs
+  const finalOrder = order.length ? order : ['study','job','clubs','project'].filter(k => available.includes(k));
+
   const schedulers = { clubs: scheduleClubs, study: scheduleStudy, job: scheduleJob, project: scheduleProject };
-  for (const key of order) {
+  for (const key of finalOrder) {
     await (schedulers[key]?.());
   }
 
