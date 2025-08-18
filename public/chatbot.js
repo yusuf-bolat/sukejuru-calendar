@@ -412,6 +412,31 @@ async function handleScheduleWizardAnswer(msg, calendar) {
     case 'askClubs': {
       const t = (msg||'').trim();
       wiz.data.clubs = /none/i.test(t) ? [] : t.split(/,|;| and /i).map(s=>s.trim()).filter(Boolean);
+      if ((wiz.data.clubs||[]).length) {
+        wiz.step = 'askClubsFixed';
+        appendMessage('bot', 'Are your club practice times fixed by the club? (yes/no)');
+      } else {
+        wiz.step = 'askProductive';
+        appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
+      }
+      return true;
+    }
+    case 'askClubsFixed': {
+      const yn = parseYesNo(msg);
+      if (yn === null) { appendMessage('bot', 'Quick yes or no — are the club practice times fixed?'); return true; }
+      wiz.data.clubsFixed = yn;
+      if (yn) {
+        wiz.step = 'askClubsTimesFixed';
+        appendMessage('bot', 'Please share the fixed times. For example: "Soccer Tue 18:00-20:00, Volleyball Sat 10:00-12:00"');
+      } else {
+        wiz.step = 'askClubsTimesPref';
+        appendMessage('bot', 'What days/times do you prefer for your clubs? Same format: "Soccer Tue 18:00-20:00"');
+      }
+      return true;
+    }
+    case 'askClubsTimesFixed':
+    case 'askClubsTimesPref': {
+      wiz.data.clubTimes = parseClubsInputToBlocks(msg, wiz.data.clubs || []);
       wiz.step = 'askProductive';
       appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
       return true;
@@ -450,6 +475,73 @@ function allocateStudyBlocks(productive) {
   return plan[productive] || plan.morning;
 }
 
+function eventsOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && aEnd > bStart;
+}
+function isSlotFree(calendar, start, end) {
+  const events = calendar.getEvents();
+  for (const ev of events) {
+    const s = new Date(ev.start);
+    const e = new Date(ev.end || ev.start);
+    if (eventsOverlap(start, end, s, e)) return false;
+  }
+  return true;
+}
+function tryPlaceBlock(calendar, base, day, startHHMM, durationHours, weekOffset = 0, stepMinutes = 30, latestHHMM = null) {
+  // Find a non-overlapping slot starting from desired time, stepping forward within same day
+  const [sh, sm] = startHHMM.split(':').map(Number);
+  let start = dateForWeekdayFrom(base, day, startHHMM, weekOffset);
+  const endLimit = dateForWeekdayFrom(base, day, latestHHMM || '22:30', weekOffset);
+  while (start <= endLimit) {
+    const end = new Date(start);
+    end.setHours(end.getHours() + durationHours);
+    if (isSlotFree(calendar, start, end)) {
+      return { start, end };
+    }
+    start = new Date(start.getTime() + stepMinutes * 60000);
+  }
+  return null;
+}
+function parseClubsInputToBlocks(input, knownClubs = []) {
+  // Parse patterns like "Soccer Tue 18:00-20:00" or "Volleyball Saturday 10:00-12:00"
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)';
+  const timeRegex = '(\\d{1,2}:\\d{2}|\\d{1,2}(?:am|pm))\\s*-\\s*(\\d{1,2}:\\d{2}|\\d{1,2}(?:am|pm))';
+  const re = new RegExp(`(?:(.+?)\s+)?${dayRegex}[^\n]*?${timeRegex}`, 'ig');
+  const results = [];
+  let m;
+  while ((m = re.exec(input)) !== null) {
+    const name = (m[1] || '').trim();
+    const dayRaw = m[2];
+    const startRaw = m[3];
+    const endRaw = m[4];
+    // Normalize day
+    const dayMap = { sun:'Sunday', mon:'Monday', tue:'Tuesday', tues:'Tuesday', wed:'Wednesday', thu:'Thursday', thur:'Thursday', thurs:'Thursday', fri:'Friday', sat:'Saturday' };
+    const dayKey = dayRaw.toLowerCase().slice(0,3);
+    const day = dayMap[dayKey] || 'Wednesday';
+    const to24 = (t) => {
+      if (/am|pm/i.test(t)) {
+        // convert like 7pm
+        const ampm = t.slice(-2).toLowerCase();
+        let hh = parseInt(t,10);
+        if (ampm === 'pm' && hh !== 12) hh += 12;
+        if (ampm === 'am' && hh === 12) hh = 0;
+        return `${String(hh).padStart(2,'0')}:00`;
+      }
+      return t;
+    };
+    results.push({ name, day, start: to24(startRaw), end: to24(endRaw) });
+  }
+  // If names missing, assign from knownClubs order
+  let idx = 0;
+  for (const r of results) {
+    if (!r.name && knownClubs[idx]) r.name = knownClubs[idx];
+    if (!r.name) r.name = 'Club Activity';
+    idx++;
+  }
+  return results;
+}
+
 async function generateTwoWeekSchedule(wiz, calendar) {
   const sem = wiz.data.baseSemester;
   const base = sem.start;
@@ -463,49 +555,76 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     await addCourseWeeks(c, null, base, 2, calendar);
   }
 
-  // Activities
-  const evts = [];
-  // Part-time job
+  // Helper for safe add
+  async function safeAdd(title, start, end, color, description = '') {
+    if (!isSlotFree(calendar, start, end)) return false;
+    try {
+      const saved = await window.authSystem.createEvent({ title, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: color, description });
+      calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+    } catch {
+      calendar.addEvent({ title, start, end, backgroundColor: color, borderColor: color, textColor: '#fff', extendedProps: { description } });
+    }
+    return true;
+  }
+
+  // Part-time job: 5-hour shifts + commute buffer (50 minutes) before shift, default 10h/week if unspecified
   if (wiz.data.hasJob) {
-    const hours = Math.max(2, wiz.data.jobHours || 10);
-    let remaining = hours;
-    const jobSlots = [ ['Monday','18:00','20:00'], ['Wednesday','18:00','20:00'], ['Friday','18:00','20:00'], ['Saturday','16:00','18:00'], ['Sunday','16:00','18:00'] ];
-    for (let w=0; w<2 && remaining>0; w++) {
-      for (const [day, s, e] of jobSlots) {
-        if (remaining <= 0) break;
-        const blockHrs = Math.min(2, remaining);
-        const start = dateForWeekdayFrom(base, day, s, w);
-        const end = new Date(start); end.setHours(start.getHours() + blockHrs);
-        try { await window.authSystem.createEvent({ title: 'Part-time Job', start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#d97706', description: '' }); } catch {}
-        calendar.addEvent({ title: 'Part-time Job', start, end, backgroundColor: '#d97706', borderColor: '#b45309', textColor: '#fff' });
-        remaining -= blockHrs;
+    const totalHours = Math.max(5, wiz.data.jobHours || 10);
+    const shiftHours = 5;
+    const commuteMin = 50; // minutes
+    let hoursLeft = totalHours;
+    const candidateWindows = [
+      ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
+      ['Saturday','12:00'], ['Sunday','12:00']
+    ];
+    for (let w=0; w<2 && hoursLeft > 0; w++) {
+      for (const [day, startHH] of candidateWindows) {
+        if (hoursLeft <= 0) break;
+        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '20:30');
+        if (!slot) continue;
+        // Add commute before shift
+        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
+        const commuteEnd = new Date(slot.start);
+        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue; // if commute overlaps, skip this slot
+        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
+        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
+        if (ok1 && ok2) hoursLeft -= shiftHours;
       }
     }
   }
-  // Clubs
-  for (const club of (wiz.data.clubs || [])) {
+
+  // Clubs: use provided times if any; otherwise default windows on Wed 17-19 avoiding clashes
+  if (Array.isArray(wiz.data.clubTimes) && wiz.data.clubTimes.length) {
     for (let w=0; w<2; w++) {
-      const start = dateForWeekdayFrom(base, 'Wednesday', '17:00', w);
-      const end = dateForWeekdayFrom(base, 'Wednesday', '19:00', w);
-      try { await window.authSystem.createEvent({ title: club, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#0ea5e9', description: 'Club/Activity' }); } catch {}
-      calendar.addEvent({ title: club, start, end, backgroundColor: '#0ea5e9', borderColor: '#0284c7', textColor: '#fff' });
+      for (const ct of wiz.data.clubTimes) {
+        const s = dateForWeekdayFrom(base, ct.day, ct.start, w);
+        const e = dateForWeekdayFrom(base, ct.day, ct.end, w);
+        await safeAdd(ct.name || 'Club Activity', s, e, '#0ea5e9', wiz.data.clubsFixed ? 'Club fixed practice' : 'Preferred time');
+      }
+    }
+  } else {
+    for (const club of (wiz.data.clubs || [])) {
+      for (let w=0; w<2; w++) {
+        const slot = tryPlaceBlock(calendar, base, 'Wednesday', '17:00', 2, w, 15, '20:00');
+        if (slot) await safeAdd(club, slot.start, slot.end, '#0ea5e9', 'Club/Activity');
+      }
     }
   }
-  // Study blocks
+
+  // Study blocks: try preferred windows, shift if needed to avoid clashes
   const studyBlocks = allocateStudyBlocks(wiz.data.productive || 'morning');
   for (let w=0; w<2; w++) {
-    for (const [day, s, e] of studyBlocks) {
-      const start = dateForWeekdayFrom(base, day, s, w);
-      const end = dateForWeekdayFrom(base, day, e, w);
-      try { await window.authSystem.createEvent({ title: 'Study Session', start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#6f42c1', description: '' }); } catch {}
-      calendar.addEvent({ title: 'Study Session', start, end, backgroundColor: '#6f42c1', borderColor: '#5a2d91', textColor: '#fff' });
+    for (const [day, sHH, eHH] of studyBlocks) {
+      const duration = (parseInt(eHH) - parseInt(sHH)) || 2;
+      const slot = tryPlaceBlock(calendar, base, day, sHH, duration, w, 15, '21:30');
+      if (slot) await safeAdd('Study Session', slot.start, slot.end, '#6f42c1');
     }
   }
 
   const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
   appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
 Courses (${total} credits): ${courseList || 'none found for that semester'}.
-If you want me to tweak anything — groups, times, or credits — just say the word.`);
+I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study around your preferences.`);
   wiz.active = false;
   wiz.step = 'idle';
 }
