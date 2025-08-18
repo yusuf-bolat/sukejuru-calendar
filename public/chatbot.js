@@ -1570,3 +1570,64 @@ document.addEventListener('DOMContentLoaded', async () => {
   // refresh memory from server once logged in
   try { await loadUserMemory(); await window.authSystem.updateMemoryFromEvents() } catch {}
 })
+
+function parseClubsInputToBlocks(input, knownClubs = []) {
+  // Parse patterns like "Soccer Tue 18:00-20:00", "Volleyball Saturday 10:00-12:00",
+  // and also flexible forms like "Mon from 6pm to 8pm" (without a club name).
+  const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Tues|Wed(?:nesday)?|Thu(?:rsday)?|Thur|Thurs|Fri(?:day)?|Sat(?:urday)?)';
+  const timeRegex = '(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\s*(?:-|to)\\s*(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)';
+  const pattern = `(?:(.+?)\\s+)?${dayRegex}\\s*(?:from\\s*)?${timeRegex}`;
+  const re = new RegExp(pattern, 'ig');
+
+  const results = [];
+  let m;
+  while ((m = re.exec(input)) !== null) {
+    let name = (m[1] || '').trim();
+    const dayRaw = m[2];
+    const startRaw = m[3];
+    const endRaw = m[4];
+
+    // Normalize day
+    const dayMap = {
+      sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday',
+      thu: 'Thursday', thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday'
+    };
+    const dayKey = dayRaw.toLowerCase().slice(0, 4).replace(/\s+/g, '');
+    // handle 3 or 4 letter keys
+    const key3 = dayKey.slice(0,3);
+    const day = dayMap[dayKey] || dayMap[key3] || 'Wednesday';
+
+    const to24 = (t) => {
+      if (!t) return '18:00';
+      let s = String(t).trim().toLowerCase();
+      const ampm = s.match(/am|pm/);
+      if (ampm) {
+        s = s.replace(/\s+/g, '');
+        const parts = s.split(':');
+        let hh = parseInt(parts[0], 10);
+        let mm = parts[1] ? parseInt(parts[1], 10) : 0;
+        const p = ampm[0];
+        if (p === 'pm' && hh !== 12) hh += 12;
+        if (p === 'am' && hh === 12) hh = 0;
+        return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+      }
+      // already 24h like 18:00
+      if (/^\d{1,2}:\d{2}$/.test(s)) return s;
+      // fallback: integer hour only
+      const hh = parseInt(s, 10);
+      if (!isNaN(hh)) return `${String(hh).padStart(2,'0')}:00`;
+      return '18:00';
+    };
+
+    results.push({ name, day, start: to24(startRaw), end: to24(endRaw) });
+  }
+
+  // If names missing, assign from knownClubs order
+  let idx = 0;
+  for (const r of results) {
+    if (!r.name && knownClubs[idx]) r.name = knownClubs[idx];
+    if (!r.name) r.name = 'Club Activity';
+    idx++;
+  }
+  return results;
+}
