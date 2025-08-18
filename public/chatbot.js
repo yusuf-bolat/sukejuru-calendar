@@ -754,22 +754,255 @@ I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/
 }
 // ---------- End Schedule Wizard ----------
 
-// Enhance system prompt with memory
+// Domain helpers for categories (chemistry, electrical, etc.)
+function expandCategoryExcludes(terms = []) {
+  const norm = (s) => String(s||'').toLowerCase();
+  const map = {
+    chemistry: ['chem', 'chemical', 'chemistry', 'electrochem'],
+    electrical: ['electric', 'electro', 'circuit', 'circuits', 'magnet', 'magnetic', 'em', 'signal', 'signals', 'control'],
+    mechanical: ['mech', 'mechanics', 'machine', 'manufact', 'robot'],
+    physics: ['physic', 'physics', 'quantum', 'optic', 'optics'],
+  };
+  const out = [];
+  for (const t of terms) {
+    const key = norm(t).replace(/\s+engineering|\s+related|\s+courses?|\./g,'').trim();
+    if (map[key]) out.push(...map[key]);
+    else out.push(key);
+  }
+  return Array.from(new Set(out.filter(Boolean)));
+}
+
+function parseISODateOnly(s) {
+  // Accept YYYY-MM-DD or with time, return Date at local midnight
+  const m = String(s||'').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
+}
+
+function withinRange(date, start, end) {
+  return (!start || date >= start) && (!end || date <= end);
+}
+
+async function deleteEventsByFilter(filter, calendar) {
+  const evs = calendar.getEvents();
+  const start = filter?.dateRange?.start ? parseISODateOnly(filter.dateRange.start) : null;
+  const end = filter?.dateRange?.end ? new Date(parseISODateOnly(filter.dateRange.end).getTime() + 86399999) : null; // end of day
+  const titleTerms = Array.isArray(filter?.titleContains) ? filter.titleContains : (filter?.titleContains ? [filter.titleContains] : []);
+  const norm = (s)=> String(s||'').toLowerCase();
+
+  const targets = filter?.all ? evs : evs.filter(ev => {
+    const s = new Date(ev.start);
+    const e = new Date(ev.end || ev.start);
+    const inRange = withinRange(s, start, end) && withinRange(e, start, end);
+    const matchTitle = !titleTerms.length || titleTerms.some(t => norm(ev.title).includes(norm(t)));
+    return inRange && matchTitle;
+  });
+
+  let count = 0;
+  for (const ev of targets) {
+    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
+    ev.remove();
+    count++;
+  }
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  return count;
+}
+
+async function moveJobEventsToWeekends(dateRange, calendar) {
+  const start = dateRange?.start ? parseISODateOnly(dateRange.start) : null;
+  const end = dateRange?.end ? new Date(parseISODateOnly(dateRange.end).getTime() + 86399999) : null;
+  const evs = calendar.getEvents().filter(ev => /part[-\s]*time\s*job/i.test(ev.title));
+  const inRange = evs.filter(ev => {
+    const s = new Date(ev.start);
+    const e = new Date(ev.end || ev.start);
+    return withinRange(s, start, end) && withinRange(e, start, end);
+  });
+  // Group by week key (Mon date ISO)
+  const weekKey = (d) => {
+    const dt = new Date(d);
+    const dow = dt.getDay(); // 0 Sun..6 Sat
+    const diffToMonday = (dow === 0 ? -6 : 1 - dow);
+    dt.setDate(dt.getDate() + diffToMonday);
+    dt.setHours(0,0,0,0);
+    return dt.toISOString().slice(0,10);
+  };
+  const groups = {};
+  for (const ev of inRange) {
+    const k = weekKey(ev.start);
+    groups[k] = groups[k] || [];
+    groups[k].push(ev);
+  }
+  let moved = 0;
+  const commuteMin = 50;
+  for (const k of Object.keys(groups)) {
+    const jobs = groups[k];
+    // Prefer Sat 12:00 then Sun 12:00 then Sat 17:00 then Sun 17:00
+    const prefSlots = [
+      ['Saturday','12:00'], ['Sunday','12:00'], ['Saturday','17:00'], ['Sunday','17:00']
+    ];
+    // Base date: parse k (Monday of week)
+    const base = parseISODateOnly(k);
+    for (let i=0; i<jobs.length; i++) {
+      const job = jobs[i];
+      const durationHrs = Math.max(1, (new Date(job.end) - new Date(job.start)) / 3600000);
+      let placed = false;
+      for (const [day, hh] of prefSlots) {
+        const slot = tryPlaceBlock(calendar, base, day, hh, durationHrs, 0, 15, '21:30');
+        if (!slot) continue;
+        // Move job
+        job.setStart(slot.start);
+        job.setEnd(slot.end);
+        try { if (job.id && window.authSystem?.updateEvent) await window.authSystem.updateEvent(job.id, {
+          title: job.title, start: job.start.toISOString(), end: job.end.toISOString(), allDay: !!job.allDay, backgroundColor: job.backgroundColor, description: job.extendedProps?.description || ''
+        }); } catch {}
+        // Adjust commute event (if exists: commute that ends at old start)
+        const commute = calendar.getEvents().find(e => e !== job && /commute to work/i.test(e.title) && new Date(e.end).getTime() === new Date(job.start).getTime());
+        if (commute) {
+          const newCommuteEnd = new Date(slot.start);
+          const newCommuteStart = new Date(newCommuteEnd.getTime() - commuteMin * 60000);
+          commute.setStart(newCommuteStart); commute.setEnd(newCommuteEnd);
+          try { if (commute.id && window.authSystem?.updateEvent) await window.authSystem.updateEvent(commute.id, {
+            title: commute.title, start: commute.start.toISOString(), end: commute.end.toISOString(), allDay: !!commute.allDay, backgroundColor: commute.backgroundColor, description: commute.extendedProps?.description || ''
+          }); } catch {}
+        }
+        placed = true; moved++;
+        break;
+      }
+      if (!placed) {
+        // If cannot place, leave as is
+      }
+    }
+  }
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  return moved;
+}
+
+async function generateScheduleFromLLM(prefs, calendar) {
+  const sem = getNearestSemester();
+  const wiz = { active: true, data: { calendar, baseSemester: sem, semester: null, coursePrefs: { include: [], exclude: [] }, hasJob: false, jobHours: 10, clubs: [], clubsFixed: false, clubTimes: [], productive: 'morning', intensify: false, targetCredits: 18, priorities: [] } };
+  // Semester selection
+  if (prefs?.semester && prefs.semester >= 1 && prefs.semester <= 8) wiz.data.semester = prefs.semester;
+  else {
+    const grad = await getGraduationYear();
+    const est = grad ? estimateSemesterFromGrad(grad, sem?.year || sem?.start?.getFullYear(), sem?.term || sem?.name) : null;
+    wiz.data.semester = est || 5;
+  }
+  // Course prefs
+  const include = Array.isArray(prefs?.include) ? prefs.include : [];
+  const excludeRaw = Array.isArray(prefs?.exclude) ? prefs.exclude : [];
+  const exclude = [...excludeRaw, ...expandCategoryExcludes(excludeRaw)];
+  wiz.data.coursePrefs = { include, exclude };
+  // Clubs
+  if (Array.isArray(prefs?.clubs)) wiz.data.clubs = prefs.clubs;
+  if (Array.isArray(prefs?.clubTimes)) wiz.data.clubTimes = prefs.clubTimes; // [{name, day, start, end}]
+  if (typeof prefs?.clubsFixed === 'boolean') wiz.data.clubsFixed = prefs.clubsFixed;
+  // Job
+  wiz.data.hasJob = !!prefs?.hasJob;
+  wiz.data.jobHours = prefs?.jobHours ? Number(prefs.jobHours) : (wiz.data.hasJob ? 10 : 0);
+  // Study/productivity
+  if (prefs?.productive) wiz.data.productive = prefs.productive;
+  wiz.data.intensify = !!prefs?.intensify;
+  wiz.data.targetCredits = prefs?.targetCredits ? Number(prefs.targetCredits) : 18;
+  // Priorities
+  const available = [];
+  if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
+  available.push('study');
+  if (wiz.data.hasJob) available.push('job');
+  if (prefs?.hasProject) available.push('project');
+  wiz.data.priorities = parsePriorities((prefs?.priorities && prefs.priorities.join(' > ')) || '', available);
+  // Generate
+  await generateTwoWeekSchedule(wiz, calendar);
+}
+
+async function executeActions(payload, calendar) {
+  const summary = payload?.summary || '';
+  const actions = Array.isArray(payload?.actions) ? payload.actions : [];
+  if (summary) appendMessage('bot', summary);
+  let report = [];
+  for (const act of actions) {
+    const type = (act?.type || '').toLowerCase();
+    try {
+      if (type === 'add_event' && Array.isArray(act.events)) {
+        let added = 0;
+        for (const ev of act.events) {
+          const startDate = parseLocalDateTime(ev.start);
+          const endDate = parseLocalDateTime(ev.end) || new Date(new Date(startDate).getTime() + 60*60*1000);
+          if (!startDate) continue;
+          try {
+            const saved = await window.authSystem.createEvent({ title: ev.title, start: startDate.toISOString(), end: endDate.toISOString(), allDay: false, backgroundColor: ev.backgroundColor || '#6f42c1', description: ev.description || '' });
+            calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+          } catch {
+            calendar.addEvent({ title: ev.title, start: startDate, end: endDate, backgroundColor: ev.backgroundColor || '#6f42c1', borderColor: ev.backgroundColor || '#6f42c1', textColor: '#fff', extendedProps: { description: ev.description || '' } });
+          }
+          added++;
+        }
+        report.push(`added ${added} event(s)`);
+      } else if (type === 'delete_events') {
+        const count = await deleteEventsByFilter(act.filter || {}, calendar);
+        report.push(`deleted ${count} event(s)`);
+      } else if (type === 'update_events') {
+        const op = (act.operation||'').toLowerCase();
+        if (op === 'move_job_weekends') {
+          const moved = await moveJobEventsToWeekends(act.dateRange || {}, calendar);
+          report.push(`moved ${moved} job event(s) to weekends`);
+        } else if (op === 'update_time' && act.titleContains && act.newTime) {
+          await updateEventTime(String(act.titleContains), '', String(act.newTime), calendar);
+          report.push(`updated time for events matching "${act.titleContains}"`);
+        }
+      } else if (type === 'generate_schedule') {
+        await generateScheduleFromLLM(act.preferences || {}, calendar);
+        report.push('generated schedule');
+      }
+    } catch (e) {
+      console.warn('Action failed', act, e);
+      report.push(`failed ${type}`);
+    }
+  }
+  if (report.length) appendMessage('bot', `${randomAck()} — ${report.join(', ')}.`);
+}
+
+// Enhance system prompt with memory and tool instructions
 function buildSystemPrompt() {
   const today = new Date();
   const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`);
+  const courseLines = (window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : [];
+  const toolSpec = [
+    'Return ONLY JSON with this shape:',
+    '{',
+    '  "summary": "short human confirmation in plain English",',
+    '  "actions": [',
+    '    { "type": "generate_schedule", "preferences": {',
+    '        "semester": 1-8,',
+    '        "include": ["course or keyword"],',
+    '        "exclude": ["keyword/category e.g., chemistry, electrical engineering"],',
+    '        "hasJob": true/false, "jobHours": number,',
+    '        "clubs": ["Soccer"],',
+    '        "clubTimes": [{"name":"Soccer","day":"Monday","start":"18:00","end":"20:00"}], "clubsFixed": true/false,',
+    '        "productive": "morning|afternoon|evening", "intensify": true/false,',
+    '        "targetCredits": number,',
+    '        "priorities": ["clubs","study","job","project"]',
+    '    }} ,',
+    '    { "type": "add_event", "events": [{"title":"...","start":"YYYY-MM-DDTHH:mm","end":"YYYY-MM-DDTHH:mm","description":"..."}] },',
+    '    { "type": "delete_events", "filter": { "all": true } },',
+    '    { "type": "delete_events", "filter": { "titleContains": ["Soccer"], "dateRange": {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"} } },',
+    '    { "type": "update_events", "operation": "move_job_weekends", "dateRange": {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"} }',
+    '  ]',
+    '}',
+    'Guidance:',
+    '- Think and infer categories: e.g., "chemistry" covers electrochemistry; "electrical engineering" covers circuits, electromagnetic, signals, control.',
+    '- Convert casual replies into canonical values: e.g., "first priority is club, then study, then part time job" -> priorities:["clubs","study","job"].',
+    '- For vague times like "from 6pm to 8pm Monday", convert to 24h and include in clubTimes.',
+    '- Prefer precise actions over chat. If information is missing, add one short follow-up question in the summary text and produce actions with reasonable defaults.',
+  ].join('\n');
   return [
-    'You are a friendly, helpful university student consultant.',
-    'Keep answers concise, warm, and human — small emojis and short acknowledgements are welcome.',
-    'Use the following user memory to resolve pronouns and references precisely:',
+    'You are a proactive university schedule consultant. You decide and act.',
+    'Use the available tools by returning JSON actions. Avoid long back-and-forth.',
+    'Memory:',
     ...memLines,
-    'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
-    'You have access to the following list of courses:',
-    ...((window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : []),
-    'IMPORTANT: When the user describes an activity, determine whether it matches a known course name/short name from the list above. Otherwise it is a general event.',
-    'If it matches a course, respond in JSON with the course schedule (lecture/exercise).',
-    'If it does NOT match any course, respond in JSON with event details (title, start, end, description).',
-    'If the user omits key info, ask one short, friendly question to clarify.'
+    'Today is ' + today.toISOString().split('T')[0] + '.',
+    'Courses available:',
+    ...courseLines,
+    toolSpec
   ].join('\n');
 }
 
@@ -815,13 +1048,21 @@ async function askChatGPT(message, calendar, options = {}) {
     hideLoading();
     let botText = data.choices?.[0]?.message?.content || '';
     let responded = false;
-    
-    // Remove code block markers if present
+    // Strip code fences
     let cleanText = botText.trim();
     if (cleanText.startsWith('```')) {
       cleanText = cleanText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
     }
-    
+
+    // Try new action protocol
+    try {
+      const payload = JSON.parse(cleanText);
+      if (payload && (payload.actions || payload.summary)) {
+        await executeActions(payload, calendar);
+        return; // handled
+      }
+    } catch {}
+
     // Try to parse JSON response
     let events = [];
     let isValidJson = false;
