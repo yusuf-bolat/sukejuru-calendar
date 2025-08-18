@@ -10,6 +10,7 @@ DROP FUNCTION IF EXISTS public.handle_new_user();
 -- Drop tables (order matters due to foreign keys)
 DROP TABLE IF EXISTS public.events;
 DROP TABLE IF EXISTS public.profiles;
+DROP TABLE IF EXISTS public.user_memory;
 
 -- Optional: Clear all existing users (be careful!)
 -- Uncomment the next line if you want to delete all registered users

@@ -7,42 +7,120 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     body { font-family: 'Segoe UI', Arial, sans-serif; margin:0; background:#181818; color:#f2f2f2; }
-    .container { max-width: 900px; margin: 0 auto; padding: 24px; }
-    .card { background:#222; border:1px solid #333; border-radius:10px; padding:18px; margin-top:18px; }
-    h1 { margin:0 0 6px; }
-    label { display:block; margin:12px 0 6px; color:#ddd; }
-    input, select { width:100%; padding:10px; border-radius:8px; border:1px solid #333; background:#1f1f1f; color:#eee; }
-    .actions { margin-top:16px; display:flex; gap:10px; }
-    button { background:#4fc3f7; color:#000; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; }
-    a { color:#4fc3f7; }
+    .container { max-width: 900px; margin: 0 auto; padding: 28px 20px 48px; }
+
+    .page-title { font-size: 36px; font-weight: 800; margin: 0 0 6px; letter-spacing: 0.3px; }
+    .page-subtitle { color:#bdbdbd; margin:0 0 14px; }
+
+    .card { background:#222; border:1px solid #333; border-radius:12px; padding:20px; margin-top:18px; box-shadow: 0 4px 18px rgba(0,0,0,0.22); }
+
+    /* Fix overflow: make sizing predictable and prevent grid children from expanding */
+    *, *::before, *::after { box-sizing: border-box; }
+    .form-grid { 
+      display:grid; 
+      grid-template-columns: 1fr; 
+      gap:14px; 
+    }
+    @media (min-width: 720px){ 
+      .form-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } 
+    }
+    .form-item { display:flex; flex-direction:column; gap:6px; min-width:0; }
+
+    label { color:#e2e2e2; font-size: 14px; }
+    input, select { width:100%; max-width:100%; padding:11px 12px; border-radius:10px; border:1px solid #333; background:#1f1f1f; color:#eee; outline: none; transition: border 0.15s, box-shadow 0.15s; }
+    /* Consistent select arrow + spacing */
+    select { 
+      -webkit-appearance: none; 
+      -moz-appearance: none; 
+      appearance: none; 
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M7 10l5 5 5-5H7z"/></svg>');
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 12px;
+      padding-right: 36px; /* room for arrow */
+    }
+    select::-ms-expand { display: none; }
+    input::placeholder { color:#7d7d7d; }
+    input:focus, select:focus { border-color:#4fc3f7; box-shadow: 0 0 0 3px rgba(79,195,247,0.15); }
+
+    .muted { color:#9a9a9a; font-size:12px; }
+
+    .row-span-2 { grid-column: span 2; }
+    @media (max-width: 719px){ .row-span-2 { grid-column: span 1; } }
+
+    .actions { margin-top:10px; display:flex; gap:12px; align-items:center; }
+    .btn-primary { background: linear-gradient(90deg, #4fc3f7 0%, #1976d2 100%); color:#fff; border:none; padding:10px 16px; border-radius:10px; cursor:pointer; font-weight:700; box-shadow: 0 2px 10px rgba(33,150,243,0.15); transition: background .2s, box-shadow .2s, transform .06s; }
+    .btn-primary:hover { background: linear-gradient(90deg, #1976d2 0%, #4fc3f7 100%); box-shadow: 0 4px 18px rgba(33,150,243,0.22); }
+    .btn-primary:disabled { opacity: .6; cursor:not-allowed; filter: grayscale(10%); }
+
+    .link { color:#4fc3f7; text-decoration:none; }
+
+    .msg { margin: 14px 0 0; display:none; }
+    .msg.ok { display:block; background:#1e2a22; border:1px solid #2f6f2a; color:#cde9cd; padding:10px 12px; border-radius:10px; }
+    .msg.err { display:block; background:#2a1e1e; border:1px solid #6f2f2f; color:#f0caca; padding:10px 12px; border-radius:10px; }
+
+    .skeleton { background: linear-gradient(90deg, #222 25%, #2a2a2a 37%, #222 63%); background-size: 400% 100%; animation: shimmer 1.2s ease-in-out infinite; border-radius: 10px; height: 42px; }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+    .inline { display:flex; gap:10px; align-items:center; }
+    .hidden { display:none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Profile</h1>
-    <p>Manage your personal information.</p>
+    <h1 class="page-title">Profile</h1>
+    <p class="page-subtitle">Manage your personal information.</p>
 
-    <div id="msg"></div>
+    <div id="msg" class="msg"></div>
 
     <div class="card">
-      <label for="name">Full Name</label>
-      <input id="name" />
+      <div class="form-grid">
+        <div class="form-item row-span-2">
+          <label for="name">Full Name</label>
+          <input id="name" placeholder="Your name" />
+        </div>
 
-      <label for="email">Email</label>
-      <input id="email" disabled />
+        <div class="form-item row-span-2">
+          <label for="email">Email</label>
+          <input id="email" disabled />
+          <div class="muted">Email is managed by your account and cannot be edited.</div>
+        </div>
 
-      <label for="university">University</label>
-      <input id="university" />
+        <div class="form-item">
+          <label for="universitySelect">University</label>
+          <select id="universitySelect">
+            <option value="KUAS">Kyoto University of Advanced Science</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div id="universityOtherWrap" class="form-item hidden">
+          <label for="universityOther">Other University</label>
+          <input id="universityOther" placeholder="Type your university" />
+        </div>
+        
+        <div class="form-item">
+          <label for="programSelect">Program</label>
+          <select id="programSelect">
+            <option value="Business and Global Economics">Business and Global Economics</option>
+            <option value="Bioenvironmental">Bioenvironmental</option>
+            <option value="Mechanical and Electrical Engineering">Mechanical and Electrical Engineering</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div id="programOtherWrap" class="form-item hidden">
+          <label for="programOther">Other Program</label>
+          <input id="programOther" placeholder="Type your program" />
+        </div>
 
-      <label for="program">Program</label>
-      <input id="program" />
-
-      <label for="gradYear">Graduation Year</label>
-      <input id="gradYear" placeholder="e.g., 2027" />
+        <div class="form-item row-span-2">
+          <label for="gradYear">Graduation Year</label>
+          <input id="gradYear" inputmode="numeric" pattern="\\d{4}" placeholder="e.g., 2027" />
+        </div>
+      </div>
 
       <div class="actions">
-        <button id="saveBtn">Save</button>
-        <a href="index.html">Back to Calendar</a>
+        <button id="saveBtn" class="btn-primary">Save</button>
+        <a class="link" href="index.html">Back to Calendar</a>
       </div>
     </div>
   </div>
@@ -50,40 +128,145 @@
   <script src="supabase-auth.js"></script>
   <script>
     const msg = document.getElementById('msg');
-    function showMsg(text, ok=false){ msg.innerHTML = `<div class="card" style="border-color:${ok?'#2d5a27':'#333'}">${text}</div>`; }
+    const nameEl = document.getElementById('name');
+    const emailEl = document.getElementById('email');
+    const uniSel = document.getElementById('universitySelect');
+    const uniOtherWrap = document.getElementById('universityOtherWrap');
+    const uniOther = document.getElementById('universityOther');
+    const progSel = document.getElementById('programSelect');
+    const progOtherWrap = document.getElementById('programOtherWrap');
+    const progOther = document.getElementById('programOther');
+    const gradEl = document.getElementById('gradYear');
+    const saveBtn = document.getElementById('saveBtn');
+
+    function showMsg(text, ok=false){
+      msg.className = 'msg ' + (ok ? 'ok' : 'err');
+      msg.textContent = text;
+    }
+
+    function hideMsg(){ msg.className = 'msg'; msg.textContent=''; }
+
+    function toggleUniOther(){
+      if (uniSel.value === 'OTHER') {
+        uniOtherWrap.classList.remove('hidden');
+      } else {
+        uniOtherWrap.classList.add('hidden');
+        uniOther.value = '';
+      }
+    }
+
+    function toggleProgOther(){
+      if (progSel.value === 'OTHER') {
+        progOtherWrap.classList.remove('hidden');
+      } else {
+        progOtherWrap.classList.add('hidden');
+        progOther.value = '';
+      }
+    }
+
+    uniSel.addEventListener('change', () => {
+      toggleUniOther();
+      // If user switches away from KUAS, force program to OTHER for free text
+      if (uniSel.value !== 'KUAS' && progSel.value !== 'OTHER') {
+        progSel.value = 'OTHER';
+        toggleProgOther();
+      }
+    });
+    progSel.addEventListener('change', toggleProgOther);
 
     document.addEventListener('DOMContentLoaded', async () => {
       await new Promise(r=>setTimeout(r,500));
       if (!authSystem.isLoggedIn()) { window.location.href='login.html'; return; }
+
       try {
-        const profile = await authSystem.getUserProfile();
-        document.getElementById('name').value = profile?.name || '';
-        document.getElementById('email').value = profile?.email || '';
-        document.getElementById('university').value = profile?.university_name || '';
-        document.getElementById('program').value = profile?.program || '';
-        document.getElementById('gradYear').value = profile?.graduation_year || '';
+        const [profile, user] = await Promise.all([
+          authSystem.getUserProfile(),
+          authSystem.getCurrentUser()
+        ]);
+
+        // Prefill name/email from profile or auth metadata
+        nameEl.value = (profile?.name || user?.user_metadata?.name || '')
+          .toString();
+        emailEl.value = (profile?.email || user?.email || '')
+          .toString();
+
+        // University
+        const uniName = (profile?.university_name || user?.user_metadata?.university_name || '').toString();
+        if (uniName && uniName.toLowerCase().includes('kyoto university of advanced science')) {
+          uniSel.value = 'KUAS';
+          uniOther.value = '';
+        } else if (uniName) {
+          uniSel.value = 'OTHER';
+          uniOther.value = uniName;
+        } else {
+          uniSel.value = 'KUAS';
+        }
+        toggleUniOther();
+
+        // Program
+        const knownPrograms = [
+          'Business and Global Economics',
+          'Bioenvironmental',
+          'Mechanical and Electrical Engineering'
+        ];
+        const prog = (profile?.program || user?.user_metadata?.program || '').toString();
+        if (prog && knownPrograms.includes(prog)) {
+          progSel.value = prog;
+        } else if (prog) {
+          progSel.value = 'OTHER';
+          progOther.value = prog;
+        } else {
+          // If not known, default by university
+          progSel.value = (uniSel.value === 'KUAS') ? knownPrograms[0] : 'OTHER';
+        }
+        toggleProgOther();
+
+        // Graduation year
+        gradEl.value = (profile?.graduation_year || user?.user_metadata?.graduation_year || '').toString();
+
       } catch(e){ console.error(e); }
     });
 
-    document.getElementById('saveBtn').addEventListener('click', async () => {
+    saveBtn.addEventListener('click', async () => {
+      hideMsg();
+      const name = nameEl.value.trim();
+      const email = emailEl.value.trim();
+      const uni = (uniSel.value === 'OTHER') ? uniOther.value.trim() : 'Kyoto University of Advanced Science';
+      const prog = (progSel.value === 'OTHER') ? progOther.value.trim() : progSel.value;
+      const gy = gradEl.value.trim();
+
+      if (!name) { showMsg('Please enter your full name.'); return; }
+      if (uniSel.value === 'OTHER' && !uni) { showMsg('Please enter your university name.'); return; }
+      if (progSel.value === 'OTHER' && !prog) { showMsg('Please enter your program.'); return; }
+      if (gy && !/^\d{4}$/.test(gy)) { showMsg('Graduation year must be 4 digits, e.g., 2027.'); return; }
+
       try {
+        saveBtn.disabled = true; const original = saveBtn.textContent; saveBtn.textContent = 'Saving...';
         const user = await authSystem.getCurrentUser();
-        const updates = {
-          name: document.getElementById('name').value.trim(),
-          university_name: document.getElementById('university').value.trim(),
-          program: document.getElementById('program').value.trim(),
-          graduation_year: document.getElementById('gradYear').value.trim(),
+        const payload = {
+          id: user.id,                 // ensure row exists/updated for this user
+          name,
+          university_name: uni,
+          program: prog,
+          graduation_year: gy || null,
+          email: email || null,
           updated_at: new Date().toISOString()
         };
+
+        // Use upsert so first-time users get a row created
         const { data, error } = await authSystem.supabase
           .from('profiles')
-          .update(updates)
-          .eq('id', user.id)
+          .upsert(payload, { onConflict: 'id' })
           .select()
           .single();
+
         if (error) throw error;
         showMsg('Saved successfully.', true);
-      } catch(e){ console.error(e); showMsg('Failed to save profile.'); }
+      } catch(e){
+        console.error('Save profile error:', e);
+        showMsg(`Failed to save profile.${e?.message ? ' ' + e.message : ''}`);
+      }
+      finally { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
     });
   </script>
 </body>

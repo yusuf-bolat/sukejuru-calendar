@@ -22,6 +22,22 @@
       flex-direction: column;
     }
     
+    /* FullCalendar theming: soften borders/lines to match dark background */
+    .fc-theme-standard {
+      --fc-border-color: #2b2b2b;            /* grid lines */
+      --fc-page-bg-color: #181818;           /* page background */
+      --fc-neutral-bg-color: #1f1f1f;        /* odd row / all-day bg */
+      --fc-today-bg-color: rgba(79,195,247,0.10); /* today highlight */
+      --fc-now-indicator-color: #ff6b6b;     /* now line */
+    }
+    .fc .fc-scrollgrid,
+    .fc .fc-scrollgrid td,
+    .fc .fc-scrollgrid th,
+    .fc .fc-timegrid-slot,
+    .fc .fc-timegrid-divider {
+      border-color: #2b2b2b;                 /* ensure all dividers use same tone */
+    }
+    
     /* Header Styles */
     .app-header {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -185,6 +201,96 @@
     /* Footer */
     .site-footer { text-align:center; margin-top: 24px; padding: 16px 24px; color:#aaa; font-size:13px; border-top: 1px solid #333; }
     .site-footer a { color:#4fc3f7; }
+
+    /* Nicer scrollbars (calendar scrollers + chat) */
+    /* Firefox */
+    #calendar .fc-scroller, .fc .fc-scroller, #chat-messages {
+      scrollbar-width: thin;                 /* thinner scrollbar */
+      scrollbar-color: rgba(79,195,247,0.6) #1b1b1b; /* thumb color | track color */
+      scrollbar-gutter: stable;
+    }
+    /* WebKit (Chrome/Edge/Safari/Opera) */
+    #calendar .fc-scroller::-webkit-scrollbar,
+    .fc .fc-scroller::-webkit-scrollbar,
+    #chat-messages::-webkit-scrollbar { width: 10px; height: 10px; }
+
+    #calendar .fc-scroller::-webkit-scrollbar-track,
+    .fc .fc-scroller::-webkit-scrollbar-track,
+    #chat-messages::-webkit-scrollbar-track {
+      background: #141414;
+      border-radius: 10px;
+    }
+
+    #calendar .fc-scroller::-webkit-scrollbar-thumb,
+    .fc .fc-scroller::-webkit-scrollbar-thumb,
+    #chat-messages::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, rgba(79,195,247,0.7), rgba(25,118,210,0.7));
+      border-radius: 10px;
+      border: 2px solid #141414;           /* creates a gap between thumb and track */
+    }
+
+    #calendar .fc-scroller::-webkit-scrollbar-thumb:hover,
+    .fc .fc-scroller::-webkit-scrollbar-thumb:hover,
+    #chat-messages::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, rgba(79,195,247,0.9), rgba(25,118,210,0.9));
+    }
+
+    /* Optional: soften corner where both bars meet */
+    #calendar .fc-scroller::-webkit-scrollbar-corner,
+    .fc .fc-scroller::-webkit-scrollbar-corner,
+    #chat-messages::-webkit-scrollbar-corner { background: #141414; }
+
+    /* Google Calendar connect/export buttons */
+    .gcal-auth-section {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .gcal-btn {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      background: linear-gradient(90deg, #4fc3f7 0%, #1976d2 100%);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(33,150,243,0.12);
+      transition: background 0.2s, box-shadow 0.2s, transform 0.06s;
+    }
+    .gcal-btn:hover, .gcal-btn:focus {
+      background: linear-gradient(90deg, #1976d2 0%, #4fc3f7 100%);
+      box-shadow: 0 4px 16px rgba(33,150,243,0.18);
+      outline: none;
+    }
+    .gcal-btn:active { transform: translateY(1px); }
+    .gcal-btn:disabled { opacity: 0.6; cursor: not-allowed; filter: grayscale(15%); }
+
+    #gcal-user-info {
+      display: none; /* toggled in JS */
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: #1b1b1b;
+      border: 1px solid #333;
+      padding: 8px 10px;
+      border-radius: 8px;
+    }
+    .gcal-signout-btn {
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: #eee;
+      border: 1px solid #3a3a3a;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s, border 0.2s;
+    }
+    .gcal-signout-btn:hover { background: #333; border-color: #4a4a4a; }
   </style>
 </head>
 <body>

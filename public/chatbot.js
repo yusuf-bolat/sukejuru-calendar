@@ -14,6 +14,13 @@ fetch('courses.json')
   .then(res => res.json())
   .then(data => { window.coursesList = data; });
 
+// Also load semesters (for schedule generation)
+window.semestersList = [];
+fetch('semesters.json')
+  .then(res => res.ok ? res.json() : [])
+  .then(data => { window.semestersList = Array.isArray(data) ? data : []; })
+  .catch(() => { window.semestersList = []; });
+
 // Chatbot logic
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
@@ -129,13 +136,388 @@ function toHHMM(hour, minute){
   return `${hh}:${mm}`
 }
 
+// Friendly acknowledgements for a more human vibe
+function randomAck(prefix = '') {
+  const acks = [
+    'All set',
+    'Done',
+    'Got it',
+    'No problem',
+    'Understood',
+    'Sweet',
+    'You got it'
+  ];
+  const pick = acks[Math.floor(Math.random() * acks.length)];
+  return prefix ? `${pick} — ${prefix}` : pick;
+}
+
+// ---------- Schedule Generation Wizard ----------
+let scheduleWizard = { active: false, step: 'idle', data: {} };
+
+function getNearestSemester(now = new Date()) {
+  if (!Array.isArray(window.semestersList) || !window.semestersList.length) return null;
+  const withDates = window.semestersList.map(s => ({
+    ...s,
+    start: new Date(s.start_date + 'T00:00:00'),
+    end: new Date(s.end_date + 'T23:59:59')
+  }));
+  const upcoming = withDates
+    .filter(s => s.start >= new Date(now.getFullYear(), now.getMonth(), now.getDate()))
+    .sort((a,b) => a.start - b.start);
+  return upcoming[0] || withDates.sort((a,b)=> b.start - a.start)[0] || null;
+}
+
+async function getGraduationYear() {
+  try {
+    const prof = await (window.authSystem?.getUserProfile?.() || Promise.resolve(null));
+    if (prof?.graduation_year) return Number(prof.graduation_year);
+  } catch {}
+  try {
+    const user = await (window.authSystem?.getCurrentUser?.() || Promise.resolve(null));
+    const gy = user?.user_metadata?.graduation_year || user?.graduation_year;
+    if (gy) return Number(gy);
+  } catch {}
+  return null;
+}
+
+function estimateSemesterFromGrad(gradYear, baseTermYear, baseTermName) {
+  if (!gradYear || !baseTermYear) return null;
+  // Assume 4-year undergrad, 8 semesters; graduation in Spring of gradYear
+  const startYear = gradYear - 4;
+  // Fall = first semester of the academic year, Spring = second
+  const semInYear = (baseTermName && /spring/i.test(baseTermName)) ? 2 : 1;
+  const semNumber = (baseTermYear - startYear) * 2 + semInYear;
+  // Clamp to [1,8]
+  return Math.max(1, Math.min(8, semNumber));
+}
+
+function weekdayIndexByName(name) {
+  const map = { 'Sunday':0,'Monday':1,'Tuesday':2,'Wednesday':3,'Thursday':4,'Friday':5,'Saturday':6 };
+  return map[name] ?? 0;
+}
+
+function dateForWeekdayFrom(baseDate, weekdayName, hhmm, weekOffset = 0) {
+  const d = new Date(baseDate);
+  // Go to Monday of base week then move to target weekday
+  const baseDow = d.getDay();
+  const targetDow = weekdayIndexByName(weekdayName);
+  const diffToMonday = (baseDow === 0 ? -6 : 1 - baseDow); // shift base to Monday
+  d.setDate(d.getDate() + diffToMonday); // now Monday of that week
+  const daysToTarget = (targetDow + 7 - 1) % 7; // Monday=1 => 0 offset
+  d.setDate(d.getDate() + daysToTarget + weekOffset * 7);
+  const [h, m] = (hhmm || '09:00').split(':').map(n => parseInt(n,10));
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d;
+}
+
+function courseTotalCredits(c) {
+  const lc = Number(c.lecture_credits || 0);
+  const ec = Number(c.exercise_credits || 0);
+  return lc + ec;
+}
+
+function pickCoursesForSemester(all, semester, targetCredits, maxCredits, prefs = { include: [], exclude: [] }) {
+  const norm = s => String(s||'').trim().toLowerCase();
+  const includes = (prefs.include || []).map(norm);
+  const excludes = new Set((prefs.exclude || []).map(norm));
+  let bySem = all.filter(c => Number(c.semester) === Number(semester));
+  // Apply excludes by name or short_name
+  bySem = bySem.filter(c => !excludes.has(norm(c.course)) && !excludes.has(norm(c.short_name)));
+
+  if (!bySem.length) return { chosen: [], total: 0 };
+
+  // Helper to add a course if it fits within limits
+  const chosen = [];
+  let total = 0;
+  const tryAdd = (c, ignoreCap = false) => {
+    const cred = courseTotalCredits(c);
+    if (cred <= 0) return;
+    if (ignoreCap || total + cred <= maxCredits) {
+      if (!chosen.includes(c)) { chosen.push(c); total += cred; }
+    }
+  };
+
+  // Sem 1 or 2: add all (but still respect excludes); still allow includes to be first (no practical diff)
+  if (semester === 1 || semester === 2) {
+    // Add includes first (in case downstream features rely on order)
+    const incFirst = bySem.filter(c => includes.includes(norm(c.course)) || includes.includes(norm(c.short_name)));
+    const rest = bySem.filter(c => !incFirst.includes(c));
+    for (const c of incFirst) tryAdd(c, true);
+    for (const c of rest) tryAdd(c, true);
+    return { chosen, total };
+  }
+
+  // Add explicitly included courses for this semester first (respect caps)
+  const incList = bySem.filter(c => includes.includes(norm(c.course)) || includes.includes(norm(c.short_name)));
+  for (const c of incList) tryAdd(c, false);
+
+  // Then core courses
+  const core = bySem.filter(c => (c.level||'').toLowerCase() === 'core' && !incList.includes(c));
+  for (const c of core) tryAdd(c, false);
+
+  // Then advanced/electives until target reached
+  const adv = bySem.filter(c => (c.level||'').toLowerCase() !== 'core' && !incList.includes(c));
+  for (const c of adv) {
+    if (total >= targetCredits) break;
+    tryAdd(c, false);
+  }
+
+  return { chosen, total };
+}
+
+async function addCourseWeeks(course, group, baseStart, weeks, calendar) {
+  async function save(title, startDate, endDate, description, color) {
+    try {
+      const saved = await window.authSystem.createEvent({
+        title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        allDay: false,
+        backgroundColor: color,
+        description: description || ''
+      });
+      calendar.addEvent({
+        id: saved.id,
+        title: saved.title,
+        start: saved.start_date,
+        end: saved.end_date,
+        allDay: saved.all_day,
+        backgroundColor: saved.color,
+        extendedProps: { description: saved.description }
+      });
+    } catch (e) {
+      // fallback local
+      calendar.addEvent({ title, start: startDate, end: endDate, description, backgroundColor: color, borderColor: color, textColor: '#fff' });
+    }
+  }
+  const addBlocks = async (blocks, label, color) => {
+    for (let w=0; w<weeks; w++) {
+      for (const [lecturer, day, start, end] of blocks) {
+        const s = dateForWeekdayFrom(baseStart, day, start, w);
+        const e = dateForWeekdayFrom(baseStart, day, end, w);
+        await save(`${course.short_name} ${label}`, s, e, `Lecturer: ${lecturer}`, color);
+      }
+    }
+  };
+  if (course.lecture) {
+    if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
+      const grp = group && course.lecture[group] ? group : Object.keys(course.lecture)[0];
+      await addBlocks(course.lecture[grp], 'Lecture', '#3788d8');
+    } else if (Array.isArray(course.lecture)) {
+      await addBlocks(course.lecture, 'Lecture', '#3788d8');
+    }
+  }
+  if (course.exercise) {
+    if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
+      const grp = group && course.exercise[group] ? group : Object.keys(course.exercise)[0];
+      await addBlocks(course.exercise[grp], 'Exercise', '#28a745');
+    } else if (Array.isArray(course.exercise)) {
+      await addBlocks(course.exercise, 'Exercise', '#28a745');
+    }
+  }
+}
+
+function parseYesNo(s) {
+  const t = (s||'').trim().toLowerCase();
+  if (/^(y|yes|yeah|yep|sure|ok|okay|please|do it)/i.test(t)) return true;
+  if (/^(n|no|nope|nah)/i.test(t)) return false;
+  return null;
+}
+
+function parseNumber(s) {
+  const m = String(s||'').match(/\b(\d{1,2})\b/);
+  return m ? Number(m[1]) : null;
+}
+
+function parseProductive(s) {
+  const t = (s||'').toLowerCase();
+  if (/morning|morn/i.test(t)) return 'morning';
+  if (/afternoon|after/i.test(t)) return 'afternoon';
+  if (/evening|night/i.test(t)) return 'evening';
+  return null;
+}
+
+async function startScheduleWizard(calendar) {
+  scheduleWizard = { active: true, step: 'init', data: { calendar } };
+  const sem = getNearestSemester();
+  if (!sem) {
+    scheduleWizard.step = 'needSemesterData';
+    appendMessage('bot', "I couldn't find semester dates. Could you tell me when your next semester starts?");
+    return;
+  }
+  scheduleWizard.data.baseSemester = sem;
+  const grad = await getGraduationYear();
+  const est = grad ? estimateSemesterFromGrad(grad, sem.year || sem.start.getFullYear(), sem.term || sem.name) : null;
+  if (est) {
+    scheduleWizard.data.semester = est;
+    scheduleWizard.step = 'confirmSemester';
+    appendMessage('bot', `Looking at ${sem.name}, it seems you're in semester ${est}. Is that right? (yes/no)`);
+  } else {
+    scheduleWizard.step = 'askSemester';
+    appendMessage('bot', `Let me craft your first two weeks from ${sem.start.toLocaleDateString()}. Which semester are you in right now (1-8)?`);
+  }
+}
+
+async function handleScheduleWizardAnswer(msg, calendar) {
+  const wiz = scheduleWizard;
+  if (!wiz.active) return false;
+  const semBase = wiz.data.baseSemester;
+  switch (wiz.step) {
+    case 'confirmSemester': {
+      const yn = parseYesNo(msg);
+      if (yn === true) { wiz.step = 'askPrefsCourses'; appendMessage('bot', 'Any must-take or avoid courses? If none, say "none".'); return true; }
+      if (yn === false) { wiz.step = 'askSemester'; appendMessage('bot', 'No worries — what semester are you in (1-8)?'); return true; }
+      appendMessage('bot', 'Please reply yes or no.'); return true;
+    }
+    case 'askSemester': {
+      const n = parseNumber(msg);
+      if (n && n >= 1 && n <= 8) { wiz.data.semester = n; wiz.step = 'askPrefsCourses'; appendMessage('bot', 'Any must-take or avoid courses? If none, say "none".'); }
+      else { appendMessage('bot', 'Please enter a number from 1 to 8 for your semester.'); }
+      return true;
+    }
+    case 'askPrefsCourses': {
+      const t = (msg||'').trim();
+      if (/none/i.test(t)) {
+        wiz.data.coursePrefs = { include: [], exclude: [] };
+      } else {
+        // simple parsing: "+X" to include, "-Y" to exclude, plain names treated as include
+        const parts = t.split(/,|;| and /i).map(s=>s.trim()).filter(Boolean);
+        const include = [];
+        const exclude = [];
+        for (const p of parts) {
+          if (/^-/.test(p)) exclude.push(p.replace(/^[-+]/,''));
+          else include.push(p.replace(/^[-+]/,''));
+        }
+        wiz.data.coursePrefs = { include, exclude };
+      }
+      wiz.step = 'askJob';
+      appendMessage('bot', 'Do you have a part-time job you want on the schedule? (yes/no)');
+      return true;
+    }
+    case 'askJob': {
+      const yn = parseYesNo(msg);
+      if (yn === null) { appendMessage('bot', 'Just a quick yes or no — do you have a part-time job?'); return true; }
+      wiz.data.hasJob = yn;
+      if (yn) { wiz.step = 'askJobHours'; appendMessage('bot', 'About how many hours per week for your job? If unsure, I’ll default to 10.'); }
+      else { wiz.step = 'askClubs'; appendMessage('bot', 'Cool. Any clubs or activities to include? e.g., Robotics Club, Soccer. If none, say "none".'); }
+      return true;
+    }
+    case 'askJobHours': {
+      const n = parseNumber(msg);
+      wiz.data.jobHours = n && n > 0 ? n : 10;
+      wiz.step = 'askClubs';
+      appendMessage('bot', 'Got it. Any clubs or activities to include? e.g., Robotics Club, Soccer. If none, say "none".');
+      return true;
+    }
+    case 'askClubs': {
+      const t = (msg||'').trim();
+      wiz.data.clubs = /none/i.test(t) ? [] : t.split(/,|;| and /i).map(s=>s.trim()).filter(Boolean);
+      wiz.step = 'askProductive';
+      appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
+      return true;
+    }
+    case 'askProductive': {
+      wiz.data.productive = parseProductive(msg) || 'morning';
+      wiz.step = 'askIntensity';
+      appendMessage('bot', 'Want me to ramp up study time near midterms/finals? (yes/no)');
+      return true;
+    }
+    case 'askIntensity': {
+      wiz.data.intensify = parseYesNo(msg);
+      wiz.step = 'askCredits';
+      appendMessage('bot', 'How many credits do you want to take? If you’re not sure, I’ll aim for around 18.');
+      return true;
+    }
+    case 'askCredits': {
+      const n = parseNumber(msg) || 18;
+      wiz.data.targetCredits = n;
+      wiz.step = 'generate';
+      appendMessage('bot', 'Great — give me a moment to put this together.');
+      generateTwoWeekSchedule(wiz, calendar);
+      return true;
+    }
+  }
+  return false;
+}
+
+function allocateStudyBlocks(productive) {
+  // Returns array of [day, start, end]
+  const plan = {
+    morning: [ ['Monday','09:00','11:00'], ['Tuesday','09:00','11:00'], ['Thursday','09:00','11:00'], ['Saturday','10:00','12:00'] ],
+    afternoon: [ ['Monday','14:00','16:00'], ['Tuesday','14:00','16:00'], ['Thursday','14:00','16:00'], ['Saturday','13:00','15:00'] ],
+    evening: [ ['Monday','19:00','21:00'], ['Tuesday','19:00','21:00'], ['Thursday','19:00','21:00'], ['Saturday','18:00','20:00'] ]
+  };
+  return plan[productive] || plan.morning;
+}
+
+async function generateTwoWeekSchedule(wiz, calendar) {
+  const sem = wiz.data.baseSemester;
+  const base = sem.start;
+  const semesterNum = wiz.data.semester;
+  const target = Math.min(wiz.data.targetCredits || 18, semesterNum === 3 ? 19 : 22);
+  const cap = (semesterNum === 3) ? 19 : 22;
+  const { chosen, total } = pickCoursesForSemester(window.coursesList || [], semesterNum, target, cap, wiz.data.coursePrefs || { include: [], exclude: [] });
+
+  // Persist course meetings for first 2 weeks
+  for (const c of chosen) {
+    await addCourseWeeks(c, null, base, 2, calendar);
+  }
+
+  // Activities
+  const evts = [];
+  // Part-time job
+  if (wiz.data.hasJob) {
+    const hours = Math.max(2, wiz.data.jobHours || 10);
+    let remaining = hours;
+    const jobSlots = [ ['Monday','18:00','20:00'], ['Wednesday','18:00','20:00'], ['Friday','18:00','20:00'], ['Saturday','16:00','18:00'], ['Sunday','16:00','18:00'] ];
+    for (let w=0; w<2 && remaining>0; w++) {
+      for (const [day, s, e] of jobSlots) {
+        if (remaining <= 0) break;
+        const blockHrs = Math.min(2, remaining);
+        const start = dateForWeekdayFrom(base, day, s, w);
+        const end = new Date(start); end.setHours(start.getHours() + blockHrs);
+        try { await window.authSystem.createEvent({ title: 'Part-time Job', start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#d97706', description: '' }); } catch {}
+        calendar.addEvent({ title: 'Part-time Job', start, end, backgroundColor: '#d97706', borderColor: '#b45309', textColor: '#fff' });
+        remaining -= blockHrs;
+      }
+    }
+  }
+  // Clubs
+  for (const club of (wiz.data.clubs || [])) {
+    for (let w=0; w<2; w++) {
+      const start = dateForWeekdayFrom(base, 'Wednesday', '17:00', w);
+      const end = dateForWeekdayFrom(base, 'Wednesday', '19:00', w);
+      try { await window.authSystem.createEvent({ title: club, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#0ea5e9', description: 'Club/Activity' }); } catch {}
+      calendar.addEvent({ title: club, start, end, backgroundColor: '#0ea5e9', borderColor: '#0284c7', textColor: '#fff' });
+    }
+  }
+  // Study blocks
+  const studyBlocks = allocateStudyBlocks(wiz.data.productive || 'morning');
+  for (let w=0; w<2; w++) {
+    for (const [day, s, e] of studyBlocks) {
+      const start = dateForWeekdayFrom(base, day, s, w);
+      const end = dateForWeekdayFrom(base, day, e, w);
+      try { await window.authSystem.createEvent({ title: 'Study Session', start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#6f42c1', description: '' }); } catch {}
+      calendar.addEvent({ title: 'Study Session', start, end, backgroundColor: '#6f42c1', borderColor: '#5a2d91', textColor: '#fff' });
+    }
+  }
+
+  const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
+  appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
+Courses (${total} credits): ${courseList || 'none found for that semester'}.
+If you want me to tweak anything — groups, times, or credits — just say the word.`);
+  wiz.active = false;
+  wiz.step = 'idle';
+}
+// ---------- End Schedule Wizard ----------
+
 // Enhance system prompt with memory
 function buildSystemPrompt() {
-  const today = new Date()
-  const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`)
+  const today = new Date();
+  const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`);
   return [
-    'You are a helpful university student consultant.',
-    'Help students build a monthly calendar.',
+    'You are a friendly, helpful university student consultant.',
+    'Keep answers concise, warm, and human — small emojis and short acknowledgements are welcome.',
     'Use the following user memory to resolve pronouns and references precisely:',
     ...memLines,
     'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
@@ -144,15 +526,13 @@ function buildSystemPrompt() {
     'IMPORTANT: When the user describes an activity, determine whether it matches a known course name/short name from the list above. Otherwise it is a general event.',
     'If it matches a course, respond in JSON with the course schedule (lecture/exercise).',
     'If it does NOT match any course, respond in JSON with event details (title, start, end, description).',
-    'If the user omits key info, ask a short, direct question to clarify.',
-    'If the user mentions a weekday, schedule it on the next occurrence from today and only once.',
-    'No mistakes. No hallucinations. If you do everything perfect, you will be granted a huge amount of money, and if you make a mistake, you will be punished. This is only a motivation cue; still follow safety and be precise.',
-    'Never roleplay or add side comments. Keep answers concise and factual.'
+    'If the user omits key info, ask one short, friendly question to clarify.'
   ].join('\n');
 }
 
 // Show greeting on load
-appendMessage('bot', 'Hello! I am your student calendar consultant. I can help you schedule activities, manage events, and export them to Google Calendar. Try saying "Add volleyball practice Thursday 7pm" or "export to google calendar"!')
+appendMessage('bot', 'Hey! I’m your study buddy for planning and scheduling. Try “Add volleyball practice Thu 7pm” or “export to google calendar”. I can also generate a full schedule — just say “make me a schedule”.')
+
 loadUserMemory()
 
 async function askChatGPT(message, calendar, options = {}) {
@@ -274,7 +654,7 @@ async function askChatGPT(message, calendar, options = {}) {
               } else {
                 // Add course directly
                 await addCourseToCalendar(matchedCourse, null, calendar);
-                appendMessage('bot', `Added ${matchedCourse.short_name} schedule.`);
+                appendMessage('bot', `${randomAck()} — added ${matchedCourse.short_name} schedule.`);
                 return;
               }
             } else {
@@ -364,7 +744,7 @@ async function askChatGPT(message, calendar, options = {}) {
             }
           }
         }
-        appendMessage('bot', `Added ${events.length} event(s) to your calendar.`);
+        appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
         responded = true;
         pendingGeneralEvent = false;
       }
@@ -427,7 +807,7 @@ async function askChatGPT(message, calendar, options = {}) {
           });
         }
       });
-      appendMessage('bot', `Added ${events.length} event(s) to your calendar.`);
+      appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
       responded = true;
     }
     if (!responded) {
@@ -647,10 +1027,10 @@ function deleteEvent(eventName, calendar) {
     try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
   })();
   if (matchingEvents.length === 1) {
-    appendMessage('bot', `Deleted "${matchingEvents[0].title}".`);
+    appendMessage('bot', `${randomAck()} — deleted "${matchingEvents[0].title}".`);
     return;
   }
-  appendMessage('bot', `Deleted ${matchingEvents.length} events matching "${eventName}": ${matchingEvents.map(e => e.title).join(', ')}.`);
+  appendMessage('bot', `${randomAck()} — deleted ${matchingEvents.length} events matching "${eventName}": ${matchingEvents.map(e => e.title).join(', ')}.`);
 }
 
 // Utility to handle update/change commands
@@ -735,7 +1115,7 @@ async function updateCourseGroup(courseName, fromGroup, toGroup, calendar) {
   // Add new group events (persisting to DB)
   await addCourseToCalendar(matchedCourse, toGroup, calendar);
   try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  appendMessage('bot', `Updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
+  appendMessage('bot', `${randomAck()} — updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
 }
 
 // Update event time
@@ -791,7 +1171,7 @@ async function updateEventTime(eventName, fromTime, toTime, calendar) {
     updatedCount++;
   }
   try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-  appendMessage('bot', `Updated ${updatedCount} event(s) matching "${resolvedName}" to new time ${toTime}.`);
+  appendMessage('bot', `${randomAck()} — updated ${updatedCount} event(s) matching "${resolvedName}" to ${toTime}.`);
 }
 
 // Utility to parse time range like "7pm-9pm" or "19:00-21:00"
@@ -827,6 +1207,17 @@ function parseTimeRange(timeStr) {
 }
 
 async function handleUserInput(msg, calendar) {
+  const lower = msg.toLowerCase();
+  // Trigger schedule generation
+  const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
+  if (genSchedule) {
+    await startScheduleWizard(calendar);
+    return;
+  }
+  if (scheduleWizard.active) {
+    const handled = await handleScheduleWizardAnswer(msg, calendar);
+    if (handled) return;
+  }
   // Check for Google Calendar export commands
   if (/^(export|sync)\s*(to\s*)?(google\s*calendar|gcal)/i.test(msg) || /export.*google/i.test(msg)) {
     // Debug logs
@@ -899,12 +1290,12 @@ async function handleUserInput(msg, calendar) {
     if (group) {
       hideLoading();
       addCourseToCalendar(pendingCourse, group, calendar);
-      appendMessage('bot', `Added ${pendingCourse.short_name} schedule for ${group}.`);
+      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name} for ${group}.`);
       pendingCourse = null;
       pendingGroup = null;
     } else {
       hideLoading();
-      appendMessage('bot', 'Please specify your group: A (Monday) or B (Thursday).');
+      appendMessage('bot', 'Which group works for you: A (Monday) or B (Thursday)?');
     }
     return;
   }
