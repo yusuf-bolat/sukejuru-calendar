@@ -1481,7 +1481,7 @@ function checkClashes(events, calendar) {
     let evEnd = new Date(ev.end);
     let overlapping = calendar.getEvents().some(existing => {
       let exStart = new Date(existing.start);
-      let exEnd = new Date(existing.end);
+      let exEnd = new Date(existing.end || existing.start);
       // Overlap if start < existing end and end > existing start
       return evStart < exEnd && evEnd > exStart;
     });
@@ -1692,7 +1692,13 @@ function parseTimeRange(timeStr) {
 
 async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase();
-  // Trigger schedule generation
+  // Prefer LLM-first action mode for all inputs
+  showLoading();
+  await askChatGPT(msg, calendar, { isCourse: 'auto' });
+  return;
+
+  // Fallbacks below (kept for safety, not normally reached because of return)
+  // Trigger schedule generation (legacy wizard)
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
   if (genSchedule) {
     await startScheduleWizard(calendar);
