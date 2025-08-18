@@ -337,6 +337,44 @@ function parseProductive(s) {
   return null;
 }
 
+// Parse user-provided priority order like "clubs > study > job > project".
+// Returns an ordered array of keys limited to availableKeys.
+function parsePriorities(input, availableKeys = []) {
+  const norm = (s) => String(s||'').trim().toLowerCase();
+  const text = norm(input);
+  if (!text || /^(default|skip|no|none)$/i.test(input||'')) {
+    // default order
+    const defaultOrder = ['clubs','study','job','project'];
+    return defaultOrder.filter(k => availableKeys.includes(k));
+  }
+  // split on common separators
+  const parts = text
+    .split(/>|,|->|→|then|than|>/i)
+    .map(s => norm(s))
+    .filter(Boolean);
+  const map = new Map([
+    ['club','clubs'], ['activity','clubs'], ['activities','clubs'],
+    ['job','job'], ['work','job'], ['part-time','job'], ['part time','job'], ['shift','job'],
+    ['study','study'], ['studying','study'],
+    ['project','project'], ['research','project'], ['thesis','project'], ['capstone','project']
+  ]);
+  const resolved = [];
+  for (let p of parts) {
+    // normalize multi-word tokens
+    p = p.replace(/\s+/g, ' ');
+    if (map.has(p)) p = map.get(p);
+    if (!['clubs','study','job','project'].includes(p)) continue;
+    if (!resolved.includes(p)) resolved.push(p);
+  }
+  // append any missing available keys in a stable default order
+  const defaultOrder = ['clubs','study','job','project'];
+  for (const k of defaultOrder) {
+    if (availableKeys.includes(k) && !resolved.includes(k)) resolved.push(k);
+  }
+  // filter to available
+  return resolved.filter(k => availableKeys.includes(k));
+}
+
 async function startScheduleWizard(calendar) {
   scheduleWizard = { active: true, step: 'init', data: { calendar } };
   const sem = getNearestSemester();
@@ -416,8 +454,9 @@ async function handleScheduleWizardAnswer(msg, calendar) {
         wiz.step = 'askClubsFixed';
         appendMessage('bot', 'Are your club practice times fixed by the club? (yes/no)');
       } else {
-        wiz.step = 'askProductive';
-        appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
+        // go ask about project work next
+        wiz.step = 'askProject';
+        appendMessage('bot', 'Do you have personal project work to include (e.g., research/thesis/app)? (yes/no)');
       }
       return true;
     }
@@ -437,6 +476,27 @@ async function handleScheduleWizardAnswer(msg, calendar) {
     case 'askClubsTimesFixed':
     case 'askClubsTimesPref': {
       wiz.data.clubTimes = parseClubsInputToBlocks(msg, wiz.data.clubs || []);
+      // after clubs, ask about project work
+      wiz.step = 'askProject';
+      appendMessage('bot', 'Do you have personal project work to include (e.g., research/thesis/app)? (yes/no)');
+      return true;
+    }
+    case 'askProject': {
+      const yn = parseYesNo(msg);
+      if (yn === null) { appendMessage('bot', 'Do you want to include project work? A quick yes or no.'); return true; }
+      wiz.data.hasProject = yn;
+      if (yn) {
+        wiz.step = 'askProjectHours';
+        appendMessage('bot', 'Roughly how many hours per week for project work? If unsure, I’ll default to 6.');
+      } else {
+        wiz.step = 'askProductive';
+        appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
+      }
+      return true;
+    }
+    case 'askProjectHours': {
+      const n = parseNumber(msg);
+      wiz.data.projectHours = n && n > 0 ? n : 6;
       wiz.step = 'askProductive';
       appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
       return true;
@@ -456,6 +516,24 @@ async function handleScheduleWizardAnswer(msg, calendar) {
     case 'askCredits': {
       const n = parseNumber(msg) || 18;
       wiz.data.targetCredits = n;
+      // Ask priorities for non-course activities
+      wiz.step = 'askPriorities';
+      const available = [];
+      if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
+      available.push('study');
+      if (wiz.data.hasJob) available.push('job');
+      if (wiz.data.hasProject) available.push('project');
+      const example = available.length ? ` For example: "${available.join(' > ')}"` : '';
+      appendMessage('bot', `Finally, what priority order should I use for activities after courses (${available.join(', ')})?${example} If you skip, I’ll use a sensible default.`);
+      return true;
+    }
+    case 'askPriorities': {
+      const available = [];
+      if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
+      available.push('study');
+      if (wiz.data.hasJob) available.push('job');
+      if (wiz.data.hasProject) available.push('project');
+      wiz.data.priorities = parsePriorities(msg, available);
       wiz.step = 'generate';
       appendMessage('bot', 'Great — give me a moment to put this together.');
       generateTwoWeekSchedule(wiz, calendar);
@@ -465,83 +543,7 @@ async function handleScheduleWizardAnswer(msg, calendar) {
   return false;
 }
 
-function allocateStudyBlocks(productive) {
-  // Returns array of [day, start, end]
-  const plan = {
-    morning: [ ['Monday','09:00','11:00'], ['Tuesday','09:00','11:00'], ['Thursday','09:00','11:00'], ['Saturday','10:00','12:00'] ],
-    afternoon: [ ['Monday','14:00','16:00'], ['Tuesday','14:00','16:00'], ['Thursday','14:00','16:00'], ['Saturday','13:00','15:00'] ],
-    evening: [ ['Monday','19:00','21:00'], ['Tuesday','19:00','21:00'], ['Thursday','19:00','21:00'], ['Saturday','18:00','20:00'] ]
-  };
-  return plan[productive] || plan.morning;
-}
-
-function eventsOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && aEnd > bStart;
-}
-function isSlotFree(calendar, start, end) {
-  const events = calendar.getEvents();
-  for (const ev of events) {
-    const s = new Date(ev.start);
-    const e = new Date(ev.end || ev.start);
-    if (eventsOverlap(start, end, s, e)) return false;
-  }
-  return true;
-}
-function tryPlaceBlock(calendar, base, day, startHHMM, durationHours, weekOffset = 0, stepMinutes = 30, latestHHMM = null) {
-  // Find a non-overlapping slot starting from desired time, stepping forward within same day
-  const [sh, sm] = startHHMM.split(':').map(Number);
-  let start = dateForWeekdayFrom(base, day, startHHMM, weekOffset);
-  const endLimit = dateForWeekdayFrom(base, day, latestHHMM || '22:30', weekOffset);
-  while (start <= endLimit) {
-    const end = new Date(start);
-    end.setHours(end.getHours() + durationHours);
-    if (isSlotFree(calendar, start, end)) {
-      return { start, end };
-    }
-    start = new Date(start.getTime() + stepMinutes * 60000);
-  }
-  return null;
-}
-function parseClubsInputToBlocks(input, knownClubs = []) {
-  // Parse patterns like "Soccer Tue 18:00-20:00" or "Volleyball Saturday 10:00-12:00"
-  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)';
-  const timeRegex = '(\\d{1,2}:\\d{2}|\\d{1,2}(?:am|pm))\\s*-\\s*(\\d{1,2}:\\d{2}|\\d{1,2}(?:am|pm))';
-  const re = new RegExp(`(?:(.+?)\s+)?${dayRegex}[^\n]*?${timeRegex}`, 'ig');
-  const results = [];
-  let m;
-  while ((m = re.exec(input)) !== null) {
-    const name = (m[1] || '').trim();
-    const dayRaw = m[2];
-    const startRaw = m[3];
-    const endRaw = m[4];
-    // Normalize day
-    const dayMap = { sun:'Sunday', mon:'Monday', tue:'Tuesday', tues:'Tuesday', wed:'Wednesday', thu:'Thursday', thur:'Thursday', thurs:'Thursday', fri:'Friday', sat:'Saturday' };
-    const dayKey = dayRaw.toLowerCase().slice(0,3);
-    const day = dayMap[dayKey] || 'Wednesday';
-    const to24 = (t) => {
-      if (/am|pm/i.test(t)) {
-        // convert like 7pm
-        const ampm = t.slice(-2).toLowerCase();
-        let hh = parseInt(t,10);
-        if (ampm === 'pm' && hh !== 12) hh += 12;
-        if (ampm === 'am' && hh === 12) hh = 0;
-        return `${String(hh).padStart(2,'0')}:00`;
-      }
-      return t;
-    };
-    results.push({ name, day, start: to24(startRaw), end: to24(endRaw) });
-  }
-  // If names missing, assign from knownClubs order
-  let idx = 0;
-  for (const r of results) {
-    if (!r.name && knownClubs[idx]) r.name = knownClubs[idx];
-    if (!r.name) r.name = 'Club Activity';
-    idx++;
-  }
-  return results;
-}
-
+// ---------- Schedule Generation Wizard ----------
 async function generateTwoWeekSchedule(wiz, calendar) {
   const sem = wiz.data.baseSemester;
   const base = sem.start;
@@ -567,64 +569,107 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     return true;
   }
 
-  // Part-time job: 5-hour shifts + commute buffer (50 minutes) before shift, default 10h/week if unspecified
-  if (wiz.data.hasJob) {
+  // Define activity schedulers
+  const scheduleJob = async () => {
+    if (!wiz.data.hasJob) return;
     const totalHours = Math.max(5, wiz.data.jobHours || 10);
     const shiftHours = 5;
     const commuteMin = 50; // minutes
-    let hoursLeft = totalHours;
-    const candidateWindows = [
-      ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
-      ['Saturday','12:00'], ['Sunday','12:00']
-    ];
-    for (let w=0; w<2 && hoursLeft > 0; w++) {
+    for (let w=0; w<2; w++) {
+      let hoursLeft = totalHours;
+      const candidateWindows = [
+        ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
+        ['Saturday','12:00'], ['Sunday','12:00']
+      ];
       for (const [day, startHH] of candidateWindows) {
         if (hoursLeft <= 0) break;
         const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '20:30');
         if (!slot) continue;
-        // Add commute before shift
         const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
         const commuteEnd = new Date(slot.start);
-        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue; // if commute overlaps, skip this slot
+        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue;
         const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
         const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
         if (ok1 && ok2) hoursLeft -= shiftHours;
       }
     }
-  }
+  };
 
-  // Clubs: use provided times if any; otherwise default windows on Wed 17-19 avoiding clashes
-  if (Array.isArray(wiz.data.clubTimes) && wiz.data.clubTimes.length) {
-    for (let w=0; w<2; w++) {
-      for (const ct of wiz.data.clubTimes) {
-        const s = dateForWeekdayFrom(base, ct.day, ct.start, w);
-        const e = dateForWeekdayFrom(base, ct.day, ct.end, w);
-        await safeAdd(ct.name || 'Club Activity', s, e, '#0ea5e9', wiz.data.clubsFixed ? 'Club fixed practice' : 'Preferred time');
-      }
-    }
-  } else {
-    for (const club of (wiz.data.clubs || [])) {
+  const scheduleClubs = async () => {
+    if (Array.isArray(wiz.data.clubTimes) && wiz.data.clubTimes.length) {
       for (let w=0; w<2; w++) {
-        const slot = tryPlaceBlock(calendar, base, 'Wednesday', '17:00', 2, w, 15, '20:00');
-        if (slot) await safeAdd(club, slot.start, slot.end, '#0ea5e9', 'Club/Activity');
+        for (const ct of wiz.data.clubTimes) {
+          const s = dateForWeekdayFrom(base, ct.day, ct.start, w);
+          const e = dateForWeekdayFrom(base, ct.day, ct.end, w);
+          await safeAdd(ct.name || 'Club Activity', s, e, '#0ea5e9', wiz.data.clubsFixed ? 'Club fixed practice' : 'Preferred time');
+        }
+      }
+    } else if ((wiz.data.clubs||[]).length) {
+      for (const club of (wiz.data.clubs || [])) {
+        for (let w=0; w<2; w++) {
+          const slot = tryPlaceBlock(calendar, base, 'Wednesday', '17:00', 2, w, 15, '20:00');
+          if (slot) await safeAdd(club, slot.start, slot.end, '#0ea5e9', 'Club/Activity');
+        }
       }
     }
-  }
+  };
 
-  // Study blocks: try preferred windows, shift if needed to avoid clashes
-  const studyBlocks = allocateStudyBlocks(wiz.data.productive || 'morning');
-  for (let w=0; w<2; w++) {
-    for (const [day, sHH, eHH] of studyBlocks) {
-      const duration = (parseInt(eHH) - parseInt(sHH)) || 2;
-      const slot = tryPlaceBlock(calendar, base, day, sHH, duration, w, 15, '21:30');
-      if (slot) await safeAdd('Study Session', slot.start, slot.end, '#6f42c1');
+  const scheduleStudy = async () => {
+    const studyBlocks = allocateStudyBlocks(wiz.data.productive || 'morning');
+    for (let w=0; w<2; w++) {
+      for (const [day, sHH, eHH] of studyBlocks) {
+        const duration = (parseInt(eHH) - parseInt(sHH)) || 2;
+        const slot = tryPlaceBlock(calendar, base, day, sHH, duration, w, 15, '21:30');
+        if (slot) await safeAdd('Study Session', slot.start, slot.end, '#6f42c1');
+      }
     }
+  };
+
+  const scheduleProject = async () => {
+    if (!wiz.data.hasProject) return;
+    const hoursPerWeek = Math.max(2, wiz.data.projectHours || 6);
+    const blockHours = 2;
+    const pref = wiz.data.productive || 'afternoon';
+    const daySlots = {
+      morning: [ ['Tuesday','09:00'], ['Thursday','09:00'], ['Saturday','10:00'] ],
+      afternoon: [ ['Tuesday','15:00'], ['Thursday','15:00'], ['Saturday','13:00'] ],
+      evening: [ ['Tuesday','19:00'], ['Thursday','19:00'], ['Sunday','18:00'] ]
+    };
+    const windows = daySlots[pref] || daySlots.afternoon;
+    for (let w=0; w<2; w++) {
+      let left = hoursPerWeek;
+      // try preferred windows first, then fill other days if needed
+      const tryWindows = [...windows, ['Friday','16:00'], ['Monday','16:00']];
+      for (const [day, startHH] of tryWindows) {
+        if (left <= 0) break;
+        const slot = tryPlaceBlock(calendar, base, day, startHH, blockHours, w, 15, '21:30');
+        if (slot) {
+          const ok = await safeAdd('Project Work', slot.start, slot.end, '#16a34a');
+          if (ok) left -= blockHours;
+        }
+      }
+    }
+  };
+
+  // Build activity order
+  const available = [];
+  if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
+  available.push('study');
+  if (wiz.data.hasJob) available.push('job');
+  if (wiz.data.hasProject) available.push('project');
+  const order = Array.isArray(wiz.data.priorities) && wiz.data.priorities.length
+    ? wiz.data.priorities.filter(k => available.includes(k))
+    : ['clubs','study','job','project'].filter(k => available.includes(k));
+
+  const schedulers = { clubs: scheduleClubs, study: scheduleStudy, job: scheduleJob, project: scheduleProject };
+  for (const key of order) {
+    await (schedulers[key]?.());
   }
 
   const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
   appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
 Courses (${total} credits): ${courseList || 'none found for that semester'}.
-I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study around your preferences.`);
+I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.`);
   wiz.active = false;
   wiz.step = 'idle';
 }
