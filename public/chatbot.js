@@ -620,265 +620,21 @@ async function handleScheduleWizardAnswer(msg, calendar) {
 }
 
 // ---------- Schedule Generation Wizard ----------
-async function generateTwoWeekSchedule(wiz, calendar) {
-  const sem = wiz.data.baseSemester;
-  const base = sem.start;
-  const semesterNum = wiz.data.semester;
-  const target = Math.min(wiz.data.targetCredits || 18, semesterNum === 3 ? 19 : 22);
-  const cap = (semesterNum === 3) ? 19 : 22;
-  const { chosen, total } = pickCoursesForSemester(window.coursesList || [], semesterNum, target, cap, wiz.data.coursePrefs || { include: [], exclude: [] });
-
-  // Persist course meetings for first 2 weeks
-  for (const c of chosen) {
-    await addCourseWeeks(c, null, base, 2, calendar);
-  }
-
-  // Helper for safe add
-  async function safeAdd(title, start, end, color, description = '') {
-    if (!isSlotFree(calendar, start, end)) return false;
-    try {
-      const saved = await window.authSystem.createEvent({ title, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: color, description });
-      calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
-    } catch {
-      calendar.addEvent({ title, start, end, backgroundColor: color, borderColor: color, textColor: '#fff', extendedProps: { description } });
-    }
-    return true;
-  }
-
-  // Define activity schedulers
-  const scheduleJob = async () => {
-    if (!wiz.data.hasJob) return;
-    const totalHours = Math.max(5, wiz.data.jobHours || 10);
-    const shiftHours = 5;
-    const commuteMin = 50; // minutes
-    for (let w=0; w<2; w++) {
-      let hoursLeft = totalHours;
-      const candidateWindows = [
-        ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
-        ['Saturday','12:00'], ['Sunday','12:00']
-      ];
-      for (const [day, startHH] of candidateWindows) {
-        if (hoursLeft <= 0) break;
-        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '20:30');
-        if (!slot) continue;
-        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
-        const commuteEnd = new Date(slot.start);
-        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue;
-        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
-        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
-        if (ok1 && ok2) hoursLeft -= shiftHours;
-      }
-    }
-  };
-
-  const scheduleClubs = async () => {
-    if (Array.isArray(wiz.data.clubTimes) && wiz.data.clubTimes.length) {
-      for (let w=0; w<2; w++) {
-        for (const ct of wiz.data.clubTimes) {
-          const s = dateForWeekdayFrom(base, ct.day, ct.start, w);
-          const e = dateForWeekdayFrom(base, ct.day, ct.end, w);
-          await safeAdd(ct.name || 'Club Activity', s, e, '#0ea5e9', wiz.data.clubsFixed ? 'Club fixed practice' : 'Preferred time');
-        }
-      }
-    } else if ((wiz.data.clubs||[]).length) {
-      for (const club of (wiz.data.clubs || [])) {
-        for (let w=0; w<2; w++) {
-          const slot = tryPlaceBlock(calendar, base, 'Wednesday', '17:00', 2, w, 15, '20:00');
-          if (slot) await safeAdd(club, slot.start, slot.end, '#0ea5e9', 'Club/Activity');
-        }
-      }
-    }
-  };
-
-  const scheduleStudy = async () => {
-    const studyBlocks = allocateStudyBlocks(wiz.data.productive || 'morning');
-    for (let w=0; w<2; w++) {
-      for (const [day, sHH, eHH] of studyBlocks) {
-        const duration = (parseInt(eHH) - parseInt(sHH)) || 2;
-        const slot = tryPlaceBlock(calendar, base, day, sHH, duration, w, 15, '21:30');
-        if (slot) await safeAdd('Study Session', slot.start, slot.end, '#6f42c1');
-      }
-    }
-  };
-
-  const scheduleProject = async () => {
-    if (!wiz.data.hasProject) return;
-    const hoursPerWeek = Math.max(2, wiz.data.projectHours || 6);
-    const blockHours = 2;
-    const pref = wiz.data.productive || 'afternoon';
-    const daySlots = {
-      morning: [ ['Tuesday','09:00'], ['Thursday','09:00'], ['Saturday','10:00'] ],
-      afternoon: [ ['Tuesday','15:00'], ['Thursday','15:00'], ['Saturday','13:00'] ],
-      evening: [ ['Tuesday','19:00'], ['Thursday','19:00'], ['Sunday','18:00'] ]
-    };
-    const windows = daySlots[pref] || daySlots.afternoon;
-    for (let w=0; w<2; w++) {
-      let left = hoursPerWeek;
-      // try preferred windows first, then fill other days if needed
-      const tryWindows = [...windows, ['Friday','16:00'], ['Monday','16:00']];
-      for (const [day, startHH] of tryWindows) {
-        if (left <= 0) break;
-        const slot = tryPlaceBlock(calendar, base, day, startHH, blockHours, w, 15, '21:30');
-        if (slot) {
-          const ok = await safeAdd('Project Work', slot.start, slot.end, '#16a34a');
-          if (ok) left -= blockHours;
-        }
-      }
-    }
-  };
-
-  // Build activity order
-  const available = [];
-  if ((wiz.data.clubs?.length || wiz.data.clubTimes?.length)) available.push('clubs');
-  available.push('study');
-  if (wiz.data.hasJob) available.push('job');
-  if (wiz.data.hasProject) available.push('project');
-  const order = Array.isArray(wiz.data.priorities) && wiz.data.priorities.length
-    ? wiz.data.priorities.filter(k => available.includes(k))
-    : ['clubs','study','job','project'].filter(k => available.includes(k));
-
-  // Safety: if still empty, fall back to study then job then clubs
-  const finalOrder = order.length ? order : ['study','job','clubs','project'].filter(k => available.includes(k));
-
-  const schedulers = { clubs: scheduleClubs, study: scheduleStudy, job: scheduleJob, project: scheduleProject };
-  for (const key of finalOrder) {
-    await (schedulers[key]?.());
-  }
-
-  const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
-  appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
-Courses (${total} credits): ${courseList || 'none found for that semester'}.
-I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.`);
-  wiz.active = false;
-  wiz.step = 'idle';
-}
-// ---------- End Schedule Wizard ----------
-
-// Domain helpers for categories (chemistry, electrical, etc.)
-function expandCategoryExcludes(terms = []) {
-  const norm = (s) => String(s||'').toLowerCase();
-  const map = {
-    chemistry: ['chem', 'chemical', 'chemistry', 'electrochem'],
-    electrical: ['electric', 'electro', 'circuit', 'circuits', 'magnet', 'magnetic', 'em', 'signal', 'signals', 'control'],
-    mechanical: ['mech', 'mechanics', 'machine', 'manufact', 'robot'],
-    physics: ['physic', 'physics', 'quantum', 'optic', 'optics'],
-  };
-  const out = [];
-  for (const t of terms) {
-    const key = norm(t).replace(/\s+engineering|\s+related|\s+courses?|\./g,'').trim();
-    if (map[key]) out.push(...map[key]);
-    else out.push(key);
-  }
-  return Array.from(new Set(out.filter(Boolean)));
-}
-
-function parseISODateOnly(s) {
-  // Accept YYYY-MM-DD or with time, return Date at local midnight
-  const m = String(s||'').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
-}
-
-function withinRange(date, start, end) {
-  return (!start || date >= start) && (!end || date <= end);
-}
-
-async function deleteEventsByFilter(filter, calendar) {
-  const evs = calendar.getEvents();
-  const start = filter?.dateRange?.start ? parseISODateOnly(filter.dateRange.start) : null;
-  const end = filter?.dateRange?.end ? new Date(parseISODateOnly(filter.dateRange.end).getTime() + 86399999) : null; // end of day
-  const titleTerms = Array.isArray(filter?.titleContains) ? filter.titleContains : (filter?.titleContains ? [filter.titleContains] : []);
-  const norm = (s)=> String(s||'').toLowerCase();
-
-  const targets = filter?.all ? evs : evs.filter(ev => {
-    const s = new Date(ev.start);
-    const e = new Date(ev.end || ev.start);
-    const inRange = withinRange(s, start, end) && withinRange(e, start, end);
-    const matchTitle = !titleTerms.length || titleTerms.some(t => norm(ev.title).includes(norm(t)));
-    return inRange && matchTitle;
-  });
-
-  let count = 0;
-  for (const ev of targets) {
-    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
-    ev.remove();
-    count++;
-  }
-  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  return count;
-}
-
-async function moveJobEventsToWeekends(dateRange, calendar) {
-  const start = dateRange?.start ? parseISODateOnly(dateRange.start) : null;
-  const end = dateRange?.end ? new Date(parseISODateOnly(dateRange.end).getTime() + 86399999) : null;
-  const evs = calendar.getEvents().filter(ev => /part[-\s]*time\s*job/i.test(ev.title));
-  const inRange = evs.filter(ev => {
-    const s = new Date(ev.start);
-    const e = new Date(ev.end || ev.start);
-    return withinRange(s, start, end) && withinRange(e, start, end);
-  });
-  // Group by week key (Mon date ISO)
-  const weekKey = (d) => {
-    const dt = new Date(d);
-    const dow = dt.getDay(); // 0 Sun..6 Sat
-    const diffToMonday = (dow === 0 ? -6 : 1 - dow);
-    dt.setDate(dt.getDate() + diffToMonday);
-    dt.setHours(0,0,0,0);
-    return dt.toISOString().slice(0,10);
-  };
-  const groups = {};
-  for (const ev of inRange) {
-    const k = weekKey(ev.start);
-    groups[k] = groups[k] || [];
-    groups[k].push(ev);
-  }
-  let moved = 0;
-  const commuteMin = 50;
-  for (const k of Object.keys(groups)) {
-    const jobs = groups[k];
-    // Prefer Sat 12:00 then Sun 12:00 then Sat 17:00 then Sun 17:00
-    const prefSlots = [
-      ['Saturday','12:00'], ['Sunday','12:00'], ['Saturday','17:00'], ['Sunday','17:00']
-    ];
-    // Base date: parse k (Monday of week)
-    const base = parseISODateOnly(k);
-    for (let i=0; i<jobs.length; i++) {
-      const job = jobs[i];
-      const durationHrs = Math.max(1, (new Date(job.end) - new Date(job.start)) / 3600000);
-      let placed = false;
-      for (const [day, hh] of prefSlots) {
-        const slot = tryPlaceBlock(calendar, base, day, hh, durationHrs, 0, 15, '21:30');
-        if (!slot) continue;
-        // Move job
-        job.setStart(slot.start);
-        job.setEnd(slot.end);
-        try { if (job.id && window.authSystem?.updateEvent) await window.authSystem.updateEvent(job.id, {
-          title: job.title, start: job.start.toISOString(), end: job.end.toISOString(), allDay: !!job.allDay, backgroundColor: job.backgroundColor, description: job.extendedProps?.description || ''
-        }); } catch {}
-        // Adjust commute event (if exists: commute that ends at old start)
-        const commute = calendar.getEvents().find(e => e !== job && /commute to work/i.test(e.title) && new Date(e.end).getTime() === new Date(job.start).getTime());
-        if (commute) {
-          const newCommuteEnd = new Date(slot.start);
-          const newCommuteStart = new Date(newCommuteEnd.getTime() - commuteMin * 60000);
-          commute.setStart(newCommuteStart); commute.setEnd(newCommuteEnd);
-          try { if (commute.id && window.authSystem?.updateEvent) await window.authSystem.updateEvent(commute.id, {
-            title: commute.title, start: commute.start.toISOString(), end: commute.end.toISOString(), allDay: !!commute.allDay, backgroundColor: commute.backgroundColor, description: commute.extendedProps?.description || ''
-          }); } catch {}
-        }
-        placed = true; moved++;
-        break;
-      }
-      if (!placed) {
-        // If cannot place, leave as is
-      }
-    }
-  }
-  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  return moved;
+function getFallbackSemester(now = new Date()) {
+  // Next Monday from today
+  const d = new Date(now);
+  const dow = d.getDay(); // 0 Sun .. 6 Sat
+  const diffToMonday = (dow === 0 ? 1 : (8 - dow)) % 7; // days until next Monday
+  d.setDate(d.getDate() + (diffToMonday === 0 ? 7 : diffToMonday));
+  d.setHours(0,0,0,0);
+  const start = new Date(d);
+  const end = new Date(start.getTime() + 90 * 24 * 60 * 60 * 1000); // ~3 months
+  return { name: 'Upcoming Term', term: 'Fallback', year: start.getFullYear(), start, end };
 }
 
 async function generateScheduleFromLLM(prefs, calendar) {
-  const sem = getNearestSemester();
+  const sem0 = getNearestSemester();
+  const sem = sem0 || getFallbackSemester();
   const wiz = { active: true, data: { calendar, baseSemester: sem, semester: null, coursePrefs: { include: [], exclude: [] }, hasJob: false, jobHours: 10, clubs: [], clubsFixed: false, clubTimes: [], productive: 'morning', intensify: false, targetCredits: 18, priorities: [] } };
   // Semester selection
   if (prefs?.semester && prefs.semester >= 1 && prefs.semester <= 8) wiz.data.semester = prefs.semester;
@@ -1838,7 +1594,7 @@ async function handleUserInput(msg, calendar) {
   }
   // Let AI handle ALL course detection and event creation
   showLoading();
-  askChatGPT(msg, calendar, {isCourse: 'auto'});
+  askChatGPT(msg, calendar, { isCourse: 'auto' });
 }
 
 // Parse a datetime string as LOCAL time when no timezone is provided
