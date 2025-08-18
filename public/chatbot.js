@@ -218,11 +218,16 @@ function courseTotalCredits(c) {
 
 function pickCoursesForSemester(all, semester, targetCredits, maxCredits, prefs = { include: [], exclude: [] }) {
   const norm = s => String(s||'').trim().toLowerCase();
-  const includes = (prefs.include || []).map(norm);
-  const excludes = new Set((prefs.exclude || []).map(norm));
+  const includesTerms = (prefs.include || []).map(norm).filter(Boolean);
+  const excludesTerms = (prefs.exclude || []).map(norm).filter(Boolean);
   let bySem = all.filter(c => Number(c.semester) === Number(semester));
-  // Apply excludes by name or short_name
-  bySem = bySem.filter(c => !excludes.has(norm(c.course)) && !excludes.has(norm(c.short_name)));
+  // Apply excludes by substring match against name or short_name
+  bySem = bySem.filter(c => {
+    const name = norm(c.course);
+    const short = norm(c.short_name);
+    const excluded = excludesTerms.some(ex => ex && (name.includes(ex) || short.includes(ex)));
+    return !excluded;
+  });
 
   if (!bySem.length) return { chosen: [], total: 0 };
 
@@ -237,10 +242,12 @@ function pickCoursesForSemester(all, semester, targetCredits, maxCredits, prefs 
     }
   };
 
-  // Sem 1 or 2: add all (but still respect excludes); still allow includes to be first (no practical diff)
+  // Sem 1 or 2: add all (but still respect excludes); still allow includes to be first
   if (semester === 1 || semester === 2) {
-    // Add includes first (in case downstream features rely on order)
-    const incFirst = bySem.filter(c => includes.includes(norm(c.course)) || includes.includes(norm(c.short_name)));
+    const incFirst = bySem.filter(c => {
+      const name = norm(c.course); const short = norm(c.short_name);
+      return includesTerms.some(inc => inc && (name.includes(inc) || short.includes(inc)));
+    });
     const rest = bySem.filter(c => !incFirst.includes(c));
     for (const c of incFirst) tryAdd(c, true);
     for (const c of rest) tryAdd(c, true);
@@ -248,7 +255,10 @@ function pickCoursesForSemester(all, semester, targetCredits, maxCredits, prefs 
   }
 
   // Add explicitly included courses for this semester first (respect caps)
-  const incList = bySem.filter(c => includes.includes(norm(c.course)) || includes.includes(norm(c.short_name)));
+  const incList = bySem.filter(c => {
+    const name = norm(c.course); const short = norm(c.short_name);
+    return includesTerms.some(inc => inc && (name.includes(inc) || short.includes(inc)));
+  });
   for (const c of incList) tryAdd(c, false);
 
   // Then core courses
@@ -327,6 +337,31 @@ function parseYesNo(s) {
 function parseNumber(s) {
   const m = String(s||'').match(/\b(\d{1,2})\b/);
   return m ? Number(m[1]) : null;
+}
+
+// Flexible number parser: handles digits and simple word numbers like "five", "fifteen", "twenty one"
+function parseNumberFlexible(s) {
+  const direct = parseNumber(s);
+  if (direct !== null) return direct;
+  const t = String(s||'').toLowerCase().replace(/-/g,' ');
+  const ones = { zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9 };
+  const teens = { ten:10, eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19 };
+  const tens = { twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
+  let total = 0; let matched = false;
+  const words = t.split(/\s+/);
+  for (let i=0; i<words.length; i++) {
+    const w = words[i];
+    if (w in teens) { total += teens[w]; matched = true; continue; }
+    if (w in tens) {
+      matched = true; total += tens[w];
+      // optional unit after tens
+      const nxt = words[i+1];
+      if (nxt && nxt in ones) { total += ones[nxt]; i++; }
+      continue;
+    }
+    if (w in ones) { total += ones[w]; matched = true; continue; }
+  }
+  return matched ? total : null;
 }
 
 function parseProductive(s) {
@@ -445,10 +480,8 @@ async function startScheduleWizard(calendar) {
 async function handleScheduleWizardAnswer(msg, calendar) {
   const wiz = scheduleWizard;
   if (!wiz.active) return false;
-  // Normalize message for step-specific intents (lightweight NLU)
   const step = wiz.step;
   const msgNorm = String(msg||'').trim();
-
   switch (step) {
     case 'confirmSemester': {
       const yn = parseYesNo(msg);
@@ -457,7 +490,7 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       appendMessage('bot', 'Please reply yes or no.'); return true;
     }
     case 'askSemester': {
-      const n = parseNumber(msg);
+      const n = parseNumberFlexible(msgNorm);
       if (n && n >= 1 && n <= 8) { wiz.data.semester = n; wiz.step = 'askPrefsCourses'; appendMessage('bot', 'Any must-take or avoid courses? If none, say "none".'); }
       else { appendMessage('bot', 'Please enter a number from 1 to 8 for your semester.'); }
       return true;
@@ -483,7 +516,7 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       return true;
     }
     case 'askJobHours': {
-      const n = parseNumber(msg);
+      const n = parseNumberFlexible(msgNorm);
       wiz.data.jobHours = n && n > 0 ? n : 10;
       wiz.step = 'askClubs';
       appendMessage('bot', 'Got it. Any clubs or activities to include? e.g., Robotics Club, Soccer. If none, say "none".');
@@ -537,7 +570,7 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       return true;
     }
     case 'askProjectHours': {
-      const n = parseNumber(msg);
+      const n = parseNumberFlexible(msgNorm);
       wiz.data.projectHours = n && n > 0 ? n : 6;
       wiz.step = 'askProductive';
       appendMessage('bot', 'When are you most productive for studying — mornings, afternoons, or evenings?');
@@ -556,7 +589,7 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       return true;
     }
     case 'askCredits': {
-      const n = parseNumber(msgNorm) || 18;
+      const n = parseNumberFlexible(msgNorm) || 18;
       wiz.data.targetCredits = n;
       wiz.step = 'askPriorities';
       const available = [];
