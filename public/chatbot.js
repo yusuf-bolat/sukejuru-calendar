@@ -633,6 +633,9 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     await addCourseWeeks(c, null, base, 2, calendar);
   }
 
+  // Track job hours actually scheduled per week
+  const jobSummary = { week0: 0, week1: 0 };
+
   // Helper for safe add
   async function safeAdd(title, start, end, color, description = '') {
     if (!isSlotFree(calendar, start, end)) return false;
@@ -648,25 +651,67 @@ async function generateTwoWeekSchedule(wiz, calendar) {
   // Define activity schedulers
   const scheduleJob = async () => {
     if (!wiz.data.hasJob) return;
-    const totalHours = Math.max(5, wiz.data.jobHours || 10);
+    const totalHours = Math.max(5, wiz.data.jobHours || 10); // per week
     const shiftHours = 5;
+    const requiredShifts = Math.ceil(totalHours / shiftHours);
     const commuteMin = 50; // minutes
-    for (let w=0; w<2; w++) {
-      let hoursLeft = totalHours;
-      const candidateWindows = [
+
+    for (let w = 0; w < 2; w++) {
+      let remainingShifts = requiredShifts;
+
+      // utility to attempt a single job placement at day/time including commute
+      const tryJobAt = async (day, startHH) => {
+        if (remainingShifts <= 0) return false;
+        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '22:00');
+        if (!slot) return false;
+        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
+        const commuteEnd = new Date(slot.start);
+        if (!isSlotFree(calendar, commuteStart, commuteEnd)) return false;
+        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
+        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
+        if (ok1 && ok2) {
+          remainingShifts -= 1;
+          jobSummary['week' + w] += shiftHours;
+          return true;
+        }
+        return false;
+      };
+
+      // Preferred windows first
+      const preferred = [
         ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
         ['Saturday','12:00'], ['Sunday','12:00']
       ];
-      for (const [day, startHH] of candidateWindows) {
-        if (hoursLeft <= 0) break;
-        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '20:30');
-        if (!slot) continue;
-        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
-        const commuteEnd = new Date(slot.start);
-        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue;
-        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
-        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
-        if (ok1 && ok2) hoursLeft -= shiftHours;
+      for (const [day, startHH] of preferred) {
+        if (remainingShifts <= 0) break;
+        await tryJobAt(day, startHH);
+      }
+
+      // Alternate windows to better hit requested hours
+      const alternates = [
+        ['Tuesday','17:00'], ['Thursday','17:00'],
+        ['Saturday','17:30'], ['Sunday','17:30'],
+        ['Tuesday','18:00'], ['Thursday','18:00']
+      ];
+      for (const [day, startHH] of alternates) {
+        if (remainingShifts <= 0) break;
+        await tryJobAt(day, startHH);
+      }
+
+      // As a last resort, scan across the week with 30-min steps for any available 5h block
+      if (remainingShifts > 0) {
+        const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+        for (const day of days) {
+          if (remainingShifts <= 0) break;
+          for (let h = 9; h <= 18 && remainingShifts > 0; h += 0.5) {
+            const hh = Math.floor(h).toString().padStart(2,'0');
+            const mm = (h % 1 ? '30' : '00');
+            const startHH = `${hh}:${mm}`;
+            // eslint-disable-next-line no-await-in-loop
+            const placed = await tryJobAt(day, startHH);
+            if (placed && remainingShifts <= 0) break;
+          }
+        }
       }
     }
   };
@@ -746,9 +791,15 @@ async function generateTwoWeekSchedule(wiz, calendar) {
   }
 
   const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
+  let jobSummaryText = '';
+  if (wiz.data.hasJob) {
+    const req = Math.max(5, wiz.data.jobHours || 10);
+    const w0 = jobSummary.week0; const w1 = jobSummary.week1;
+    jobSummaryText = ` Job hours scheduled: week 1 ${w0}h, week 2 ${w1}h (requested ${req}h/week).`;
+  }
   appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
 Courses (${total} credits): ${courseList || 'none found for that semester'}.
-I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.`);
+I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.${jobSummaryText}`);
   wiz.active = false;
   wiz.step = 'idle';
 }
@@ -1486,6 +1537,7 @@ async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase();
   // Trigger schedule generation
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
+ 
   if (genSchedule) {
     await startScheduleWizard(calendar);
     return;
