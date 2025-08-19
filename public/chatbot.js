@@ -145,12 +145,7 @@ function randomAck(prefix = '') {
     'No problem',
     'Understood',
     'Sweet',
-    'You got it',
-    'Thanks!',
-    'Gotcha',
-    "Sounds good",
-    'Nice!',
-    'Appreciate it'
+    'You got it'
   ];
   const pick = acks[Math.floor(Math.random() * acks.length)];
   return prefix ? `${pick} — ${prefix}` : pick;
@@ -613,54 +608,11 @@ async function handleScheduleWizardAnswer(msg, calendar) {
       if (wiz.data.hasJob) available.push('job');
       if (wiz.data.hasProject) available.push('project');
       wiz.data.priorities = parsePriorities(msgNorm, available);
+      // Brief confirmation in canonical form
       try { appendMessage('bot', `Understood — priorities: ${wiz.data.priorities.join(' > ')}.`); } catch {}
       wiz.step = 'generate';
       appendMessage('bot', 'Great — give me a moment to put this together.');
-      // Show loading animation while generating
-      showLoading();
       generateTwoWeekSchedule(wiz, calendar);
-      return true;
-    }
-    case 'review': {
-      // User can confirm or request tweaks
-      const yn = parseYesNo(msg);
-      if (/looks good|good|fine|ok|okay|great|perfect|awesome|satisfied|no changes/i.test(msgNorm) || yn === true) {
-        wiz.active = false; wiz.step = 'idle';
-        appendMessage('bot', 'Thanks! If you need more tweaks later, just tell me.');
-        return true;
-      }
-      // Parse study hours request
-      const studyMatch = msgNorm.match(/(\d{1,2})\s*hour[s]?\s*(?:of\s*)?(study|study\s*sessions)/i) || msgNorm.match(/make\s*.*study.*?(\d{1,2})\s*hour/i);
-      const weekdaysJob = /weekday|week\s*days|no\s*weekend|don'?t\s*want\s*to\s*work\s*(on\s*)?weekend/i.test(msgNorm);
-      if (!studyMatch && !weekdaysJob) {
-        appendMessage('bot', "Gotcha — tell me things like 'make study 10 hours' or 'move job to weekdays only'. Do you want me to adjust something like that?");
-        return true;
-      }
-      showLoading();
-      setTimeout(async () => {
-        try {
-          if (studyMatch) {
-            const target = Number(studyMatch[1]);
-            await applyStudyHoursAdjustment(calendar, scheduleWizard.data.baseSemester.start, target, scheduleWizard.data.productive || 'morning');
-            appendMessage('bot', `${randomAck('updated study time')} — aiming for ${target} hours per week.`);
-          }
-          if (weekdaysJob) {
-            await applyWeekdayJobAdjustment(calendar, scheduleWizard.data.baseSemester.start, scheduleWizard.data.jobHours || 10);
-            appendMessage('bot', `${randomAck('shifted job to weekdays')} — weekends are now free from work.`);
-          }
-          hideLoading();
-          const followUps = [
-            'How does this look now?',
-            'Better?',
-            'Does this match what you had in mind?',
-            'Happy with these changes?'
-          ];
-          appendMessage('bot', followUps[Math.floor(Math.random()*followUps.length)] + ' You can say “looks good” or ask for more tweaks.');
-        } catch(e) {
-          hideLoading();
-          appendMessage('bot', 'Sorry — I ran into an issue applying the changes. Could you try rephrasing?');
-        }
-      }, 50);
       return true;
     }
   }
@@ -707,6 +659,7 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     for (let w = 0; w < 2; w++) {
       let remainingShifts = requiredShifts;
 
+      // utility to attempt a single job placement at day/time including commute
       const tryJobAt = async (day, startHH) => {
         if (remainingShifts <= 0) return false;
         const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '22:00');
@@ -716,10 +669,6 @@ async function generateTwoWeekSchedule(wiz, calendar) {
         if (!isSlotFree(calendar, commuteStart, commuteEnd)) return false;
         const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
         const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
-        // Commute back home
-        const backStart = new Date(slot.end);
-        const backEnd = new Date(slot.end.getTime() + commuteMin * 60000);
-        const ok3 = ok2 && isSlotFree(calendar, backStart, backEnd) && await safeAdd('Commute Home', backStart, backEnd, '#475569');
         if (ok1 && ok2) {
           remainingShifts -= 1;
           jobSummary['week' + w] += shiftHours;
@@ -851,486 +800,1226 @@ async function generateTwoWeekSchedule(wiz, calendar) {
   appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
 Courses (${total} credits): ${courseList || 'none found for that semester'}.
 I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.${jobSummaryText}`);
-  // Ask for review, keep wizard active
-  const reviewQs = [
-    'How does this look? Want any tweaks (e.g., more study hours, move job to weekdays)?',
-    "Thanks — does this work for you, or should I adjust anything?",
-    "Gotcha. Shall I change study time or move work around?",
-    "That's nice to see filled in. Any changes you'd like?"
+  wiz.active = false;
+  wiz.step = 'idle';
+}
+// ---------- End Schedule Wizard ----------
+
+// Enhance system prompt with memory
+function buildSystemPrompt() {
+  const today = new Date();
+  const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`);
+  return [
+    'You are a friendly, helpful university student consultant.',
+    'Keep answers concise, warm, and human — small emojis and short acknowledgements are welcome.',
+    'Use the following user memory to resolve pronouns and references precisely:',
+    ...memLines,
+    'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
+    'You have access to the following list of courses:',
+    ...((window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : []),
+    'IMPORTANT: When the user describes an activity, determine whether it matches a known course name/short name from the list above. Otherwise it is a general event.',
+    'If it matches a course, respond in JSON with the course schedule (lecture/exercise).',
+    'If it does NOT match any course, respond in JSON with event details (title, start, end, description).',
+    'If the user omits key info, ask one short, friendly question to clarify.'
+  ].join('\n');
+}
+
+// Show greeting on load
+appendMessage('bot', 'Hey! I’m your study buddy for planning and scheduling. Try “Add volleyball practice Thu 7pm” or “export to google calendar”. I can also generate a full schedule — just say “make me a schedule”.')
+
+loadUserMemory()
+
+// Safe JSON fetch: throws with readable text when response isn't JSON
+async function safeFetchJSON(input, init) {
+  const res = await fetch(input, init);
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) {
+    if (ct.includes('application/json')) {
+      let err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`API Error ${res.status}: ${typeof err === 'string' ? err : (err.error || JSON.stringify(err)).slice(0,200)}`);
+    } else {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`API Error ${res.status}: ${txt.slice(0,200)}`);
+    }
+  }
+  if (!ct.includes('application/json')) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Server returned non-JSON: ${txt.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function askChatGPT(message, calendar, options = {}) {
+  // API key is now handled securely server-side
+  const apiKey = await getOpenAIApiKey();
+  if (!apiKey) {
+    appendMessage('bot', '❌ Server configuration error. Please check the deployment.');
+    return;
+  }
+  
+  const today = new Date();
+  const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
+  const maxDateStr = maxDate.toISOString().split('T')[0];
+  const systemPrompt = buildSystemPrompt()
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: message }
   ];
-  appendMessage('bot', reviewQs[Math.floor(Math.random()*reviewQs.length)]);
-  hideLoading();
-  wiz.step = 'review';
-  wiz.active = true;
-}
 
-// Helpers for review adjustments
-function getWeekRange(baseDate, weekOffset = 0) {
-  const d = new Date(baseDate);
-  const baseDow = d.getDay();
-  const diffToMonday = (baseDow === 0 ? -6 : 1 - baseDow);
-  d.setDate(d.getDate() + diffToMonday + weekOffset * 7);
-  const start = new Date(d); start.setHours(0,0,0,0);
-  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
-  return { start, end };
-}
+  try {
+    // Call our secure serverless function instead of OpenAI directly
+    const data = await safeFetchJSON('/api/openai-edge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages })
+    });
 
-function hoursBetween(start, end) { return (new Date(end) - new Date(start)) / 3600000; }
-
-async function applyStudyHoursAdjustment(calendar, baseStart, targetPerWeek, pref = 'morning') {
-  const placeBlock = async (title, day, startHH, durHours, week) => {
-    const s = dateForWeekdayFrom(baseStart, day, startHH, week);
-    const e = new Date(s.getTime() + durHours * 3600000);
-    if (isSlotFree(calendar, s, e)) {
-      try {
-        const saved = await window.authSystem.createEvent({ title, start: s.toISOString(), end: e.toISOString(), allDay: false, backgroundColor: '#6f42c1', description: '' });
-        calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
-        return true;
-      } catch { calendar.addEvent({ title, start: s, end: e, backgroundColor: '#6f42c1', borderColor: '#6f42c1', textColor: '#fff' }); return true; }
+    hideLoading();
+    let botText = data.choices?.[0]?.message?.content || '';
+    let responded = false;
+    
+    // Remove code block markers if present
+    let cleanText = botText.trim();
+    if (cleanText.startsWith('```')) {
+      cleanText = cleanText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
     }
-    return false;
-  };
-
-  const studyBlocks = allocateStudyBlocks(pref);
-  for (let w=0; w<2; w++) {
-    const range = getWeekRange(baseStart, w);
-    const events = calendar.getEvents().filter(ev => ev.title === 'Study Session' && ev.start >= range.start && ev.start <= range.end);
-    let current = events.reduce((sum, ev) => sum + hoursBetween(ev.start, ev.end), 0);
-    // Remove excess
-    if (current > targetPerWeek) {
-      let toRemove = current - targetPerWeek + 1e-6;
-      const sorted = events.sort((a,b)=>b.start-a.start); // remove latest first
-      for (const ev of sorted) {
-        if (toRemove <= 0) break;
-        const dur = hoursBetween(ev.start, ev.end);
-        try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
-        ev.remove(); toRemove -= dur;
+    
+    // Try to parse JSON response
+    let events = [];
+    let isValidJson = false;
+    try {
+      const parsed = JSON.parse(cleanText);
+      isValidJson = true;
+      
+      // Handle different JSON structures from AI
+      if (Array.isArray(parsed)) {
+        events = parsed;
+      } else if (parsed.events) {
+        events = parsed.events;
+      } else if (parsed.event) {
+        events = [parsed.event]; // Convert single event to array
+      } else if (parsed.title && parsed.start) {
+        events = [parsed]; // Direct event object
+      } else {
+        events = [];
+        isValidJson = false; // Not a valid event JSON
       }
-      continue;
+    } catch (e) {
+      isValidJson = false;
     }
-    // Add missing
-    let need = targetPerWeek - current;
-    const windows = [...studyBlocks, ['Friday','18:00','20:00'], ['Monday','18:00','20:00']];
-    for (const [day, sHH, eHH] of windows) {
-      if (need <= 0) break;
-      const dur = Math.min(2, need);
-      // eslint-disable-next-line no-await-in-loop
-      const ok = await placeBlock('Study Session', day, sHH, dur, w);
-      if (ok) need -= dur;
-    }
-  }
-}
-
-async function applyWeekdayJobAdjustment(calendar, baseStart, requestedHoursPerWeek) {
-  const isWeekend = d => { const day = new Date(d).getDay(); return day === 0 || day === 6; };
-  // Remove weekend job + commute events
-  const titles = ['Part-time Job','Commute to Work','Commute Home'];
-  for (const ev of calendar.getEvents()) {
-    if (titles.includes(ev.title) && isWeekend(ev.start)) {
-      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
-      ev.remove();
-    }
-  }
-  // Count remaining job hours per week
-  const countWeek = (w)=>{
-    const range = getWeekRange(baseStart, w);
-    const evs = calendar.getEvents().filter(ev => ev.title === 'Part-time Job' && ev.start >= range.start && ev.start <= range.end);
-    return evs.reduce((sum, ev)=> sum + hoursBetween(ev.start, ev.end), 0);
-  };
-  const shiftHours = 5; const commuteMin = 50;
-  const days = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
-
-  // Move a flexible event (study/project) to weekend to free space
-  const moveEventToWeekend = async (ev) => {
-    const durH = hoursBetween(ev.start, ev.end);
-    const candidates = [ ['Saturday','10:00'], ['Saturday','13:00'], ['Sunday','10:00'], ['Sunday','13:00'], ['Sunday','16:00'] ];
-    for (const [d, hh] of candidates) {
-      const s = dateForWeekdayFrom(baseStart, d, hh, 0); // same week as ev
-      const e = new Date(s.getTime() + durH * 3600000);
-      if (isSlotFree(calendar, s, e)) {
-        // Update UI
-        ev.setStart(s); ev.setEnd(e);
-        try { if (ev.id && window.authSystem?.updateEvent) await window.authSystem.updateEvent(ev.id, { title: ev.title, start: s.toISOString(), end: e.toISOString(), allDay: !!ev.allDay, backgroundColor: ev.backgroundColor, description: ev.extendedProps?.description || '' }); } catch {}
-        return true;
+    // Handle both auto-detection and forced general events
+    if (options && (options.isCourse === false || options.isCourse === 'auto')) {
+      // If bot is asking for missing info, set pendingGeneralEvent
+      if (!responded && botText && /specify|provide|what is|when do you/i.test(botText)) {
+        pendingGeneralEvent = true;
+        // capture a draft title from the user message for next turn
+        const t = extractTitleFromMessage(message)
+        if (t) pendingDraft.title = t
+      } else {
+        pendingGeneralEvent = false;
+        pendingDraft.title = null;
       }
-    }
-    return false;
-  };
-
-  const bumpAndPlace = async (w, day, startHH) => {
-    // Build the candidate time window and try to move flexible events away
-    const s = dateForWeekdayFrom(baseStart, day, startHH, w);
-    const e = new Date(s.getTime() + shiftHours * 3600000);
-    // Find overlapping events
-    const overlaps = calendar.getEvents().filter(ev => eventsOverlap(s, e, new Date(ev.start), new Date(ev.end || ev.start)));
-    // Only proceed if overlapping events are flexible
-    const flex = overlaps.filter(ev => /Study Session|Project Work/i.test(ev.title));
-    if (!flex.length) return false;
-    // Try to move each flexible event to a weekend slot
-    for (const ev of flex) {
-      // eslint-disable-next-line no-await-in-loop
-      const moved = await moveEventToWeekend(ev);
-      if (!moved) return false; // cannot clear this time window
-    }
-    // After clearing, try to place the job now
-    return await placeJob(w, day, startHH);
-  };
-
-  const placeJob = async (w, day, startHH) => {
-    const slot = tryPlaceBlock(calendar, baseStart, day, startHH, shiftHours, w, 30, '22:00');
-    if (!slot) return false;
-    const cs = new Date(slot.start.getTime() - commuteMin * 60000), ce = new Date(slot.start);
-    if (!isSlotFree(calendar, cs, ce)) return false;
-    try { const s1 = await window.authSystem.createEvent({ title: 'Commute to Work', start: cs.toISOString(), end: ce.toISOString(), allDay: false, backgroundColor: '#475569', description: '' }); calendar.addEvent({ id: s1.id, title: s1.title, start: s1.start_date, end: s1.end_date, allDay: s1.all_day, backgroundColor: s1.color }); } catch { calendar.addEvent({ title: 'Commute to Work', start: cs, end: ce, backgroundColor: '#475569' }); }
-    try { const s2 = await window.authSystem.createEvent({ title: 'Part-time Job', start: slot.start.toISOString(), end: slot.end.toISOString(), allDay: false, backgroundColor: '#d97706', description: '' }); calendar.addEvent({ id: s2.id, title: s2.title, start: s2.start_date, end: s2.end_date, allDay: s2.all_day, backgroundColor: s2.color }); } catch { calendar.addEvent({ title: 'Part-time Job', start: slot.start, end: slot.end, backgroundColor: '#d97706' }); }
-    const bhS = new Date(slot.end), bhE = new Date(slot.end.getTime() + commuteMin * 60000);
-    if (isSlotFree(calendar, bhS, bhE)) { try { const s3 = await window.authSystem.createEvent({ title: 'Commute Home', start: bhS.toISOString(), end: bhE.toISOString(), allDay: false, backgroundColor: '#475569', description: '' }); calendar.addEvent({ id: s3.id, title: s3.title, start: s3.start_date, end: s3.end_date, allDay: s3.all_day, backgroundColor: s3.color }); } catch { calendar.addEvent({ title: 'Commute Home', start: bhS, end: bhE, backgroundColor: '#475569' }); } }
-    return true;
-  };
-
-  for (let w=0; w<2; w++) {
-    let have = countWeek(w);
-    while (have + 1e-6 < requestedHoursPerWeek) {
-      let placed = false;
-      for (const day of days) {
-        if (placed) break;
-        for (const hh of ['16:00','17:00','18:00','13:00']) {
-          // eslint-disable-next-line no-await-in-loop
-          if (await placeJob(w, day, hh)) { placed = true; break; }
-          // If direct place fails, try to bump flexible events and then place
-          // eslint-disable-next-line no-await-in-loop
-          if (!placed && await bumpAndPlace(w, day, hh)) { placed = true; break; }
+      
+      // Check if AI returned course information (not a general event)
+      if (options.isCourse === 'auto') {
+        try {
+          const courseCheck = JSON.parse(cleanText);
+          if (courseCheck.course || courseCheck.schedule) {
+            // This is course-related JSON - handle as course
+            const courses = await loadCourses();
+            const courseName = courseCheck.course || '';
+            
+            // Find matching course by name or short name
+            const matchedCourse = courses.find(c => 
+              courseName.toLowerCase().includes(c.course.toLowerCase()) ||
+              courseName.toLowerCase().includes(c.short_name.toLowerCase()) ||
+              c.course.toLowerCase().includes(courseName.toLowerCase()) ||
+              c.short_name.toLowerCase().includes(courseName.toLowerCase())
+            );
+            
+            if (matchedCourse) {
+              // Check if course needs group selection
+              let needsGroup = false;
+              let groupNames = [];
+              if (matchedCourse.lecture && typeof matchedCourse.lecture === 'object' && !Array.isArray(matchedCourse.lecture)) {
+                needsGroup = true;
+                groupNames = Object.keys(matchedCourse.lecture);
+              }
+              if (matchedCourse.exercise && typeof matchedCourse.exercise === 'object' && !Array.isArray(matchedCourse.exercise)) {
+                needsGroup = true;
+                Object.keys(matchedCourse.exercise).forEach(g => {
+                  if (!groupNames.includes(g)) groupNames.push(g);
+                });
+              }
+              
+              if (needsGroup && groupNames.length > 0) {
+                pendingCourse = matchedCourse;
+                appendMessage('bot', `Which group are you in for ${matchedCourse.short_name}? ${groupNames.join(' or ')}?`);
+                return;
+              } else {
+                // Add course directly
+                await addCourseToCalendar(matchedCourse, null, calendar);
+                appendMessage('bot', `${randomAck()} — added ${matchedCourse.short_name} schedule.`);
+                return;
+              }
+            } else {
+              // Course not found in our database
+              appendMessage('bot', `I couldn't find the course "${courseName}" in our database. Could you try with the full course name or short name?`);
+              return;
+            }
+          }
+        } catch (e) {
+          // Not course JSON, continue with general event processing
         }
       }
-      if (!placed) break; // cannot place more
-      have = countWeek(w);
+      
+      // For general events, just add them directly - trust AI's course detection from system prompt
+      // The AI system prompt is responsible for determining if user input is course-related or not
+      
+      if (events && events.length) {
+        // Process each event asynchronously
+        for (const ev of events) {
+          const startRaw = ev.start || ev["start date"] || ev.start_date;
+          const endRaw = ev.end || ev["end date"] || ev.end_date;
+          if (ev.title && startRaw) {
+            try {
+              const startDate = parseLocalDateTime(startRaw);
+              if (!startDate) throw new Error('Invalid start date');
+              let endDate = null;
+              if (endRaw) {
+                const tmp = parseLocalDateTime(endRaw);
+                endDate = tmp || null;
+              }
+              if (!endDate) {
+                endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+              }
+              const startISO = startDate.toISOString();
+              const endISO = endDate.toISOString();
+
+              const eventData = {
+                title: ev.title,
+                start: startISO,
+                end: endISO,
+                allDay: false,
+                backgroundColor: '#6f42c1',
+                description: ev.description || ''
+              };
+              const savedEvent = await window.authSystem.createEvent(eventData);
+              rememberActivity('general', savedEvent.title, new Date(savedEvent.start_date), new Date(savedEvent.end_date))
+              // persist updated memory summary
+              try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+              calendar.addEvent({
+                id: savedEvent.id,
+                title: savedEvent.title,
+                start: savedEvent.start_date,
+                end: savedEvent.end_date,
+                allDay: savedEvent.all_day,
+                backgroundColor: savedEvent.color,
+                extendedProps: {
+                  description: savedEvent.description
+                }
+              });
+            } catch (error) {
+              console.error('Error saving event:', error);
+              // Fallback to local calendar only
+              try {
+                const startDate = parseLocalDateTime(startRaw) || new Date();
+                let endDate = endRaw ? (parseLocalDateTime(endRaw) || new Date(startDate.getTime() + 60 * 60 * 1000)) : new Date(startDate.getTime() + 60 * 60 * 1000);
+                calendar.addEvent({
+                  title: ev.title,
+                  start: startDate,
+                  end: endDate,
+                  description: ev.description,
+                  backgroundColor: '#6f42c1',
+                  borderColor: '#5a2d91',
+                  textColor: '#ffffff'
+                });
+              } catch (_) {
+                // As a last resort, add with raw values
+                calendar.addEvent({
+                  title: ev.title,
+                  start: startRaw,
+                  end: endRaw,
+                  description: ev.description,
+                  backgroundColor: '#6f42c1',
+                  borderColor: '#5a2d91',
+                  textColor: '#ffffff'
+                });
+              }
+            }
+          }
+        }
+        appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
+        responded = true;
+        pendingGeneralEvent = false;
+      }
+      if (!responded) {
+        // Debug information
+        console.log('API Response Debug:', {
+          botText: botText,
+          cleanText: cleanText,
+          apiKey: apiKey ? 'Present' : 'Missing',
+          data: data
+        });
+        
+        // Check if response contains JSON that should be processed
+        if (botText.trim().includes('{') && botText.trim().includes('}')) {
+          try {
+            // Try to extract and parse JSON from the response
+            const jsonMatch = botText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+            if (jsonMatch) {
+              const jsonStr = jsonMatch[0];
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.course || parsed.title || parsed.schedule) {
+                // Don't show raw JSON, show a user-friendly message
+                appendMessage('bot', 'I found some schedule information. Let me check if I can add it to your calendar.');
+                return;
+              }
+            }
+          } catch (e) {
+            // If JSON parsing fails, treat as regular text
+          }
+        }
+        
+        if (botText.trim()) {
+          // Filter out raw JSON responses
+          const cleanResponse = botText.trim();
+          if (!cleanResponse.startsWith('{') && !cleanResponse.includes('"course"') && !cleanResponse.includes('"schedule"')) {
+            appendMessage('bot', cleanResponse);
+          } else {
+            appendMessage('bot', 'I understand you want to add something to your calendar. Could you provide more details about the event, like the name, date, and time?');
+          }
+        } else {
+          appendMessage('bot', 'I need more information to add your activity. Could you specify the name, date, or time?');
+        }
+      }
+      return;
+    }
+    // Otherwise, fallback to old logic (for course-related AI fallback)
+    if (events && events.length) {
+      events.forEach(ev => {
+        const start = ev.start || ev["start date"] || ev.start_date;
+        const end = ev.end || ev["end date"] || ev.end_date;
+        if (ev.title && start) {
+          calendar.addEvent({
+            title: ev.title,
+            start: start,
+            end: end,
+            description: ev.description,
+            backgroundColor: '#6f42c1', // Purple for general activities
+            borderColor: '#5a2d91',
+            textColor: '#ffffff'
+          });
+        }
+      });
+      appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
+      responded = true;
+    }
+    if (!responded) {
+      // Check if response contains JSON that should be processed
+      if (botText.trim().includes('{') && botText.trim().includes('}')) {
+        try {
+          // Try to extract and parse JSON from the response
+          const jsonMatch = botText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+          if (jsonMatch) {
+            const jsonStr = jsonMatch[0];
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.course || parsed.title || parsed.schedule) {
+              // Don't show raw JSON, show a user-friendly message
+              appendMessage('bot', 'I found some schedule information. Let me process that for you.');
+              return;
+            }
+          }
+        } catch (e) {
+          // If JSON parsing fails, treat as regular text
+        }
+      }
+      
+      if (botText.trim()) {
+        // Filter out raw JSON responses
+        const cleanResponse = botText.trim();
+        if (!cleanResponse.startsWith('{') && !cleanResponse.includes('"course"') && !cleanResponse.includes('"schedule"')) {
+          appendMessage('bot', cleanResponse);
+        } else {
+          appendMessage('bot', 'I understand you want to add something to your calendar. Could you provide more details about the event?');
+        }
+      } else {
+        appendMessage('bot', 'I need more information to add your activity. Could you specify the name, date, or time?');
+      }
+    }
+  } catch (err) {
+    hideLoading();
+    console.error('ChatGPT API Error:', err);
+
+    const msg = String(err && err.message || err);
+    if (/non-JSON|Unexpected token/i.test(msg) || /404|Not Found/i.test(msg)) {
+      appendMessage('bot', '❌ The AI API endpoint is not returning JSON. If you are running locally, start the server and access the site through it, or deploy with the included vercel.json so /api is available.');
+      return;
+    }
+    if (msg.includes('401')) {
+      appendMessage('bot', '❌ API key error. Please check your OpenAI API key configuration.');
+    } else if (msg.includes('quota')) {
+      appendMessage('bot', '❌ OpenAI API quota exceeded. Please check your usage limits.');
+    } else {
+      appendMessage('bot', `❌ Error connecting to AI: ${msg}`);
     }
   }
 }
 
-// === Missing helpers and UI wiring ===
-
-// Basic time range parser: accepts "HH:MM-HH:MM", "H-H", and am/pm variants
-function parseTimeRange(text) {
-  if (!text) return null;
-  const s = String(text).trim().toLowerCase();
-  // Normalize spaces
-  const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-to]+\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  if (!m) return null;
-  let [ , sh, sm, samp, eh, em, eamp ] = m;
-  sm = sm || '00'; em = em || '00';
-  const to24 = (h, min, ap) => {
-    let hh = parseInt(h, 10);
-    let mm = parseInt(min, 10) || 0;
-    if (ap) {
-      const apu = ap.toLowerCase();
-      if (apu === 'pm' && hh < 12) hh += 12;
-      if (apu === 'am' && hh === 12) hh = 0;
-    }
-    return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
-  };
-  // If only one am/pm provided, apply smart default to the other
-  if (samp && !eamp) eamp = samp; // assume same period if end lacks
-  const start = to24(sh, sm, samp);
-  const end = to24(eh, em, eamp);
-  return { start, end };
+// Utility to load courses.json
+async function loadCourses() {
+  const res = await fetch('courses.json');
+  return await res.json();
 }
 
+// Utility to add course schedule to calendar
+async function addCourseToCalendar(course, group, calendar) {
+  // helper to persist then add
+  async function saveAndAdd({ title, startDate, endDate, description, color }) {
+    try {
+      const saved = await window.authSystem.createEvent({
+        title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        allDay: false,
+        backgroundColor: color,
+        description: description || ''
+      });
+      rememberActivity('course', title, startDate, endDate)
+      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+      calendar.addEvent({
+        id: saved.id,
+        title: saved.title,
+        start: saved.start_date,
+        end: saved.end_date,
+        allDay: saved.all_day,
+        backgroundColor: saved.color,
+        extendedProps: { description: saved.description }
+      });
+    } catch (e) {
+      console.error('Failed to persist course event, adding locally:', e);
+      calendar.addEvent({
+        title,
+        start: startDate,
+        end: endDate,
+        description,
+        backgroundColor: color,
+        borderColor: color,
+        textColor: '#ffffff'
+      });
+    }
+  }
+
+  // Handle lectures
+  if (course.lecture) {
+    if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
+      // Grouped lectures
+      if (course.lecture[group]) {
+        for (const [lecturer, day, start, end] of course.lecture[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
+            title: `${course.short_name} Lecture`,
+            startDate,
+            endDate,
+            description: `Lecturer: ${lecturer}`,
+            color: '#3788d8'
+          });
+        }
+      }
+    } else {
+      // Single array
+      for (const [lecturer, day, start, end] of course.lecture) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
+          title: `${course.short_name} Lecture`,
+          startDate,
+          endDate,
+          description: `Lecturer: ${lecturer}`,
+          color: '#3788d8'
+        });
+      }
+    }
+  }
+  // Handle exercises
+  if (course.exercise) {
+    if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
+      // Grouped exercises
+      if (course.exercise[group]) {
+        for (const [lecturer, day, start, end] of course.exercise[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
+            title: `${course.short_name} Exercise`,
+            startDate,
+            endDate,
+            description: `Lecturer: ${lecturer}`,
+            color: '#28a745'
+          });
+        }
+      }
+    } else {
+      // Single array
+      for (const [lecturer, day, start, end] of course.exercise) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
+          title: `${course.short_name} Exercise`,
+          startDate,
+          endDate,
+          description: `Lecturer: ${lecturer}`,
+          color: '#28a745'
+        });
+      }
+    }
+  }
+}
+
+// Utility to get next date for a weekday from today
+function nextWeekdayDate(weekday, time) {
+  const days = {
+    'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0
+  };
+  const today = new Date();
+  let dayNum = days[weekday];
+  let result = new Date(today);
+  result.setHours(...time.split(':').map(Number), 0, 0);
+  let diff = (dayNum - today.getDay() + 7) % 7;
+  if (diff === 0 && result < today) diff = 7;
+  result.setDate(today.getDate() + diff);
+  return result;
+}
+
+// Intercept user input for course selection
+let pendingCourse = null;
+let pendingGroup = null;
+let pendingClashEvents = null;
+let pendingClashMsg = '';
+let pendingGeneralEvent = false; // Track if waiting for general event info
+
+// Utility to check for event clashes
+function checkClashes(events, calendar) {
+  let clashes = [];
+  events.forEach(ev => {
+    let evStart = new Date(ev.start);
+    let evEnd = new Date(ev.end);
+    let overlapping = calendar.getEvents().some(existing => {
+      let exStart = new Date(existing.start);
+      let exEnd = new Date(existing.end);
+      // Overlap if start < existing end and end > existing start
+      return evStart < exEnd && evEnd > exStart;
+    });
+    if (overlapping) {
+      clashes.push(ev.title + ' (' + evStart.toLocaleString() + ' - ' + evEnd.toLocaleString() + ')');
+    }
+  });
+  return clashes;
+}
+
+// Utility to delete events by name
+function deleteEvent(eventName, calendar) {
+  const allEvents = calendar.getEvents();
+  const matchingEvents = allEvents.filter(event => 
+    event.title.toLowerCase().includes(eventName.toLowerCase())
+  );
+  if (matchingEvents.length === 0) {
+    appendMessage('bot', `No events found matching "${eventName}". Try checking the exact event name.`);
+    return;
+  }
+  // delete from DB if possible
+  (async () => {
+    for (const ev of matchingEvents) {
+      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
+      ev.remove();
+    }
+    try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  })();
+  if (matchingEvents.length === 1) {
+    appendMessage('bot', `${randomAck()} — deleted "${matchingEvents[0].title}".`);
+    return;
+  }
+  appendMessage('bot', `${randomAck()} — deleted ${matchingEvents.length} events matching "${eventName}": ${matchingEvents.map(e => e.title).join(', ')}.`);
+}
+
+// New: Clear all events from the calendar (and DB when possible)
+async function clearAllEvents(calendar) {
+  const evs = calendar.getEvents();
+  if (!evs.length) {
+    appendMessage('bot', 'There are no events to delete.');
+    return;
+  }
+  let removed = 0;
+  for (const ev of evs) {
+    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
+    ev.remove();
+    removed++;
+  }
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  appendMessage('bot', `${randomAck()} — cleared ${removed} event(s) from your schedule.`);
+}
+
+// Utility to handle update/change commands
+async function handleUpdateCommand(msg, calendar) {
+  const lowerMsg = msg.toLowerCase();
+  
+  // Check for course group changes (e.g., "change machine shop from group B to A")
+  const courseGroupMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*from\s*group\s*([AB])\s*to\s*([AB])/i);
+  if (courseGroupMatch) {
+    const courseName = courseGroupMatch[2].trim();
+    const fromGroup = `Group ${courseGroupMatch[3].toUpperCase()}`;
+    const toGroup = `Group ${courseGroupMatch[4].toUpperCase()}`;
+    
+    await updateCourseGroup(courseName, fromGroup, toGroup, calendar);
+    return;
+  }
+  
+  // Check for time changes (e.g., "change volleyball practice time from 7pm-9pm to 8pm-10pm")
+  const timeChangeMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*time\s*from\s*(.+?)\s*to\s*(.+)/i);
+  if (timeChangeMatch) {
+    const eventName = timeChangeMatch[2].trim();
+    const fromTime = timeChangeMatch[3].trim();
+    const toTime = timeChangeMatch[4].trim();
+    
+    await updateEventTime(eventName, fromTime, toTime, calendar);
+    return;
+  }
+  
+  // Check for general time changes without "time" keyword (e.g., "change volleyball practice from 7pm-9pm to 8pm-10pm")
+  const generalTimeMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*from\s*(\d+(?::\d+)?(?:am|pm)?(?:\s*-\s*\d+(?::\d+)?(?:am|pm)?)?)\s*to\s*(\d+(?::\d+)?(?:am|pm)?(?:\s*-\s*\d+(?::\d+)?(?:am|pm)?)?)/i);
+  if (generalTimeMatch) {
+    const eventName = generalTimeMatch[2].trim();
+    const fromTime = generalTimeMatch[3].trim();
+    const toTime = generalTimeMatch[4].trim();
+    
+    await updateEventTime(eventName, fromTime, toTime, calendar);
+    return;
+  }
+  
+  // If no specific pattern matched, provide guidance
+  appendMessage('bot', 'I can help you update events! Try these formats:\n• "change [course] from group A to B"\n• "change [event] time from [old time] to [new time]"\n• Examples: "change machine shop from group B to A" or "change volleyball practice from 7pm-9pm to 8pm-10pm"');
+}
+
+// Update course group (delete old group events and add new group events)
+async function updateCourseGroup(courseName, fromGroup, toGroup, calendar) {
+  const courses = await loadCourses();
+  const matchedCourse = courses.find(c => 
+    courseName.includes(c.course.toLowerCase()) ||
+    courseName.includes(c.short_name.toLowerCase()) ||
+    c.course.toLowerCase().includes(courseName) ||
+    c.short_name.toLowerCase().includes(courseName)
+  );
+  
+  if (!matchedCourse) {
+    appendMessage('bot', `I couldn't find a course matching "${courseName}". Please check the course name.`);
+    return;
+  }
+  
+  // Find and delete events from the old group
+  const allEvents = calendar.getEvents();
+  const oldEvents = allEvents.filter(event => 
+    event.title.includes(matchedCourse.short_name)
+  );
+  
+  if (oldEvents.length === 0) {
+    appendMessage('bot', `No events found for ${matchedCourse.short_name}. Add the course first, then change groups.`);
+    return;
+  }
+  
+  // Remove old events (calendar + DB)
+  for (const event of oldEvents) {
+    try {
+      if (event.id) {
+        await window.authSystem.deleteEvent(event.id);
+      }
+    } catch (e) {
+      console.warn('Failed to delete event from DB, removing locally:', e);
+    }
+    event.remove();
+  }
+  
+  // Add new group events (persisting to DB)
+  await addCourseToCalendar(matchedCourse, toGroup, calendar);
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  appendMessage('bot', `${randomAck()} — updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
+}
+
+// Update event time
+async function updateEventTime(eventName, fromTime, toTime, calendar) {
+  // use memory to resolve vague references like "my practice"
+  let resolvedName = eventName
+  const lower = eventName.toLowerCase()
+  if (/my\s+(practice|training|gym|club|job|shift)/i.test(eventName)) {
+    const typeMap = { practice: 'fitness', training: 'fitness', gym: 'fitness', club: 'club', job: 'job', shift: 'job' }
+    const key = (lower.match(/practice|training|gym|club|job|shift/)||[])[0]
+    const type = typeMap[key] || null
+    const candidates = (sessionMemory.activities||[]).filter(a => !type || a.type === type)
+    if (candidates.length) resolvedName = candidates[candidates.length - 1].name
+  }
+  const allEvents = calendar.getEvents();
+  const matchingEvents = allEvents.filter(event => 
+    event.title.toLowerCase().includes(resolvedName.toLowerCase())
+  );
+  if (matchingEvents.length === 0) {
+    appendMessage('bot', `No events found matching "${eventName}".`);
+    return;
+  }
+  const newTimes = parseTimeRange(toTime);
+  if (!newTimes) {
+    appendMessage('bot', `I couldn't understand the new time "${toTime}". Please use format like "7pm-9pm" or "19:00-21:00".`);
+    return;
+  }
+  let updatedCount = 0;
+  for (const event of matchingEvents) {
+    const eventDate = new Date(event.start);
+    const newStart = new Date(eventDate);
+    const newEnd = new Date(eventDate);
+    newStart.setHours(newTimes.startHour, newTimes.startMinute, 0, 0);
+    newEnd.setHours(newTimes.endHour, newTimes.endMinute, 0, 0);
+    // Update UI
+    event.setStart(newStart);
+    event.setEnd(newEnd);
+    // Persist to DB
+    try {
+      if (event.id && window.authSystem?.updateEvent) {
+        await window.authSystem.updateEvent(event.id, {
+          title: event.title,
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+          allDay: !!event.allDay,
+          backgroundColor: event.backgroundColor,
+          description: event.extendedProps?.description || ''
+        })
+      }
+    } catch (e) { console.warn('Failed to persist update:', e) }
+    // Update memory entry for this activity name
+    rememberActivity('general', event.title, newStart, newEnd)
+    updatedCount++;
+  }
+  try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+  appendMessage('bot', `${randomAck()} — updated ${updatedCount} event(s) matching "${resolvedName}" to ${toTime}.`);
+}
+
+// Utility to parse time range like "7pm-9pm" or "19:00-21:00"
+function parseTimeRange(timeStr) {
+  // Handle formats like "7pm-9pm", "7:30pm-9:30pm", "19:00-21:00"
+  const timeMatch = timeStr.match(/(\d+)(?::(\d+))?\s*(am|pm)?\s*-\s*(\d+)(?::(\d+))?\s*(am|pm)?/i);
+  if (!timeMatch) return null;
+  
+  let startHour = parseInt(timeMatch[1]);
+  const startMinute = parseInt(timeMatch[2] || '0');
+  const startPeriod = timeMatch[3];
+  
+  let endHour = parseInt(timeMatch[4]);
+  const endMinute = parseInt(timeMatch[5] || '0');
+  const endPeriod = timeMatch[6];
+  
+  // Convert to 24-hour format
+  if (startPeriod) {
+    if (startPeriod.toLowerCase() === 'pm' && startHour !== 12) startHour += 12;
+    if (startPeriod.toLowerCase() === 'am' && startHour === 12) startHour = 0;
+  }
+  
+  if (endPeriod) {
+    if (endPeriod.toLowerCase() === 'pm' && endHour !== 12) endHour += 12;
+    if (endPeriod.toLowerCase() === 'am' && endHour === 12) endHour = 0;
+  } else if (startPeriod) {
+    // If start has period but end doesn't, assume same period for end
+    if (startPeriod.toLowerCase() === 'pm' && endHour !== 12) endHour += 12;
+    if (startPeriod.toLowerCase() === 'am' && endHour === 12) endHour = 0;
+  }
+  
+  return { startHour, startMinute, endHour, endMinute };
+}
+
+async function handleUserInput(msg, calendar) {
+  const lower = msg.toLowerCase();
+  // Trigger schedule generation
+  const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
+ 
+  if (genSchedule) {
+    await startScheduleWizard(calendar);
+    return;
+  }
+  if (scheduleWizard.active) {
+    const handled = await handleScheduleWizardAnswer(msg, calendar);
+    if (handled) return;
+  }
+  // Quick commands to clear everything
+  if (/(^|\b)(clear|reset)\s+(calendar|schedule)\b/i.test(msg) || /^(delete|remove)\s+all(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?\b/i.test(msg) || /^delete\s+everything/i.test(msg)) {
+    await clearAllEvents(calendar);
+    return;
+  }
+  // New: delete category in a time window, e.g., "delete all club activities from last week of September"
+  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+(from|in|between|during)\s+(.+)/i);
+  if (m) {
+    const categoryPhrase = m[3].trim();
+    const timePhrase = m[5].trim();
+    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
+    return;
+  }
+  // Also support commands without preposition: "delete clubs last week of September"
+  m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
+  if (m) {
+    const categoryPhrase = m[3].trim();
+    const timePhrase = m[4].trim();
+    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
+    return;
+  }
+  // Check for Google Calendar export commands
+  if (/^(export|sync)\s*(to\s*)?(google\s*calendar|gcal)/i.test(msg) || /export.*google/i.test(msg)) {
+    // Debug logs
+    const exportBtn = document.getElementById('gcal-export-btn');
+    const userInfo = document.getElementById('gcal-user-info');
+    const signInBtn = document.getElementById('gcal-signin-btn');
+    
+    console.log('Export command detected');
+    console.log('Export button:', exportBtn, exportBtn?.style.display, exportBtn?.offsetParent);
+    console.log('User info:', userInfo, userInfo?.style.display);
+    console.log('Sign in button:', signInBtn, signInBtn?.style.display);
+    
+    // Check if user is signed in using multiple methods
+    const isSignedIn = (exportBtn && exportBtn.style.display === 'inline-block') ||
+                      (exportBtn && exportBtn.offsetParent !== null) ||
+                      (userInfo && userInfo.style.display === 'flex') ||
+                      (signInBtn && signInBtn.style.display === 'none');
+    
+    console.log('Is signed in:', isSignedIn);
+    
+    if (isSignedIn) {
+      // User is signed in, trigger export
+      appendMessage('bot', '📤 Starting export process...');
+      if (typeof exportCalendarToGoogle === 'function') {
+        try {
+          exportCalendarToGoogle();
+        } catch (error) {
+          console.error('Export error:', error);
+          appendMessage('bot', '❌ Export failed. Please try clicking the "Export to Google Calendar" button instead.');
+        }
+      } else {
+        appendMessage('bot', '❌ Export function is not available. Please try clicking the "Export to Google Calendar" button instead.');
+      }
+    } else {
+      // User is not signed in
+      appendMessage('bot', '🔐 To export to Google Calendar, please first click "Connect Google Calendar" button above, then try the export command again.');
+    }
+    return;
+  }
+  
+  // Check for Google Calendar connection commands
+  if (/^(connect|sign\s*in|login).*google/i.test(msg) || /google.*connect/i.test(msg)) {
+    appendMessage('bot', 'Please click the "Connect Google Calendar" button above to sign in with your Google account.');
+    return;
+  }
+  
+  // Check for update/change commands
+  if (/^(update|change|modify)\s+|want to change|want to update/i.test(msg)) {
+    await handleUpdateCommand(msg, calendar);
+    return;
+  }
+  
+  // Check for delete command
+  if (/^delete\s+/i.test(msg)) {
+    const eventName = msg.replace(/^delete\s+/i, '').trim();
+    // If request looks like deleting everything, route to clearAll
+    if (/^(all|everything)(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?$/i.test(eventName) || /(all\s+events|entire\s+(calendar|schedule))/i.test(eventName)) {
+      await clearAllEvents(calendar);
+      return;
+    }
+    if (eventName) {
+      deleteEvent(eventName, calendar);
+      return;
+    } else {
+      appendMessage('bot', 'Please specify what you want to delete. For example: "delete volleyball practice"');
+      return;
+    }
+ }
+  
+  // Check if waiting for group
+  if (pendingCourse && !pendingGroup) {
+    let group = null;
+    if (/A|Monday/i.test(msg)) group = 'Group A';
+    if (/B|Thursday/i.test(msg)) group = 'Group B';
+    if (group) {
+      hideLoading();
+      addCourseToCalendar(pendingCourse, group, calendar);
+      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name} for ${group}.`);
+      pendingCourse = null;
+      pendingGroup = null;
+    } else {
+      hideLoading();
+      appendMessage('bot', 'Which group works for you: A (Monday) or B (Thursday)?');
+    }
+    return;
+  }
+  // If waiting for general event info, try to combine with pending draft and schedule directly
+  if (pendingGeneralEvent) {
+    // Try to parse weekday + time range from the user's reply
+    const weekday = detectWeekday(msg)
+    const tr = parseTimeRangeFlexible(msg) || null
+    if (pendingDraft.title && weekday && tr) {
+      const startTime = toHHMM(tr.startHour, tr.startMinute)
+      const endTime = toHHMM(tr.endHour, tr.endMinute)
+      const startDate = nextWeekdayDate(weekday, startTime)
+      const endDate = nextWeekdayDate(weekday, endTime)
+      try {
+        const saved = await window.authSystem.createEvent({
+          title: pendingDraft.title,
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          allDay: false,
+          backgroundColor: '#6f42c1',
+          description: ''
+        })
+        rememberActivity('general', saved.title, new Date(saved.start_date), new Date(saved.end_date))
+        try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+        calendar.addEvent({
+          id: saved.id,
+          title: saved.title,
+          start: saved.start_date,
+          end: saved.end_date,
+          allDay: saved.all_day,
+          backgroundColor: saved.color,
+          extendedProps: { description: saved.description }
+        })
+        appendMessage('bot', `Added ${saved.title} on ${weekday} ${startTime}-${endTime}.`)
+      } catch (e) {
+        console.warn('Direct schedule failed, falling back to AI:', e)
+        showLoading();
+        askChatGPT(msg, calendar, {isCourse: false});
+        return;
+      }
+      // clear pending state
+      pendingGeneralEvent = false
+      pendingDraft.title = null
+      return
+    }
+    // Fallback to AI if we cannot fully resolve
+    showLoading();
+    askChatGPT(msg, calendar, {isCourse: false});
+    return;
+  }
+  // Let AI handle ALL course detection and event creation
+  showLoading();
+  askChatGPT(msg, calendar, {isCourse: 'auto'});
+}
+
+// Parse a datetime string as LOCAL time when no timezone is provided
+function parseLocalDateTime(input) {
+  if (!input) return null;
+  if (input instanceof Date) return new Date(input.getTime());
+  if (typeof input === 'number') return new Date(input);
+  let str = String(input).trim();
+  // If explicit numeric offset (+09:00 or -0700), trust it
+  if (/[+\-]\d{2}:?\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d) ? null : d;
+  }
+  // If ends with 'Z' (UTC) but user likely means local, strip it and treat as local
+  if (/[zZ]$/.test(str)) {
+    str = str.replace(/[zZ]$/, '');
+  }
+  // Match forms: YYYY-MM-DD, YYYY-MM-DDTHH:mm[:ss], or with space instead of T
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const [, y, mo, d, h = '00', mi = '00', s = '00'] = m;
+    const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+    return isNaN(dt) ? null : dt;
+  }
+  // Fallback to native parsing
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
+}
+
+// Send button logic - robust binding
+function bindSendControls() {
+  const inputEl = document.getElementById('chat-input');
+  const btnEl = document.getElementById('send-btn');
+  if (!btnEl || !inputEl) return;
+  if (btnEl.dataset.bound === '1') return; // prevent duplicate bindings
+
+  const onSend = () => {
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+    appendMessage('user', msg);
+    inputEl.value = '';
+    handleUserInput(msg, window.calendar);
+  };
+
+  btnEl.addEventListener('click', onSend);
+  inputEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') onSend();
+  });
+  btnEl.dataset.bound = '1';
+}
+
+// Bind send button controls on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', async () => {
+  bindSendControls()
+  // refresh memory from server once logged in
+  try { await loadUserMemory(); await window.authSystem.updateMemoryFromEvents() } catch {}
+})
+
+function parseClubsInputToBlocks(input, knownClubs = []) {
+  // Parse patterns like "Soccer Tue 18:00-20:00", "Volleyball Saturday 10:00-12:00",
+  // and also flexible forms like "Mon from 6pm to 8pm" (without a club name).
+  const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Tues|Wed(?:nesday)?|Thu(?:rsday)?|Thur|Thurs|Fri(?:day)?|Sat(?:urday)?)';
+  const timeRegex = '(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\s*(?:-|to)\\s*(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)';
+  const pattern = `(?:(.+?)\\s+)?${dayRegex}\\s*(?:from\\s*)?${timeRegex}`;
+  const re = new RegExp(pattern, 'ig');
+
+  const results = [];
+  let m;
+  while ((m = re.exec(input)) !== null) {
+    let name = (m[1] || '').trim();
+    const dayRaw = m[2];
+    const startRaw = m[3];
+    const endRaw = m[4];
+
+    // Normalize day
+    const dayMap = {
+      sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday',
+      thu: 'Thursday', thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday'
+    };
+    const dayKey = dayRaw.toLowerCase().slice(0, 4).replace(/\s+/g, '');
+    // handle 3 or 4 letter keys
+    const key3 = dayKey.slice(0,3);
+    const day = dayMap[dayKey] || dayMap[key3] || 'Wednesday';
+
+    const to24 = (t) => {
+      if (!t) return '18:00';
+      let s = String(t).trim().toLowerCase();
+      const ampm = s.match(/am|pm/);
+      if (ampm) {
+        s = s.replace(/\s+/g, '');
+        const parts = s.split(':');
+        let hh = parseInt(parts[0], 10);
+        let mm = parts[1] ? parseInt(parts[1], 10) : 0;
+        const p = ampm[0];
+        if (p === 'pm' && hh !== 12) hh += 12;
+        if (p === 'am' && hh === 12) hh = 0;
+        return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+      }
+      // already 24h like 18:00
+      if (/^\d{1,2}:\d{2}$/.test(s)) return s;
+      // fallback: integer hour only
+      const hh = parseInt(s, 10);
+      if (!isNaN(hh)) return `${String(hh).padStart(2,'0')}:00`;
+      return '18:00';
+    };
+
+    results.push({ name, day, start: to24(startRaw), end: to24(endRaw) });
+  }
+
+  // If names missing, assign from knownClubs order
+  let idx = 0;
+  for (const r of results) {
+    if (!r.name && knownClubs[idx]) r.name = knownClubs[idx];
+    if (!r.name) r.name = 'Club Activity';
+    idx++;
+  }
+  return results;
+}
+
+// ---------- Scheduling utilities for the wizard ----------
 function eventsOverlap(aStart, aEnd, bStart, bEnd) {
-  const s1 = new Date(aStart).getTime();
-  const e1 = new Date(aEnd).getTime();
-  const s2 = new Date(bStart).getTime();
-  const e2 = new Date(bEnd).getTime();
-  return s1 < e2 && s2 < e1;
+  return aStart < bEnd && aEnd > bStart;
 }
 
 function isSlotFree(calendar, start, end) {
   try {
-    const evs = calendar.getEvents();
-    for (const ev of evs) {
+    const events = calendar.getEvents();
+    for (const ev of events) {
+      // Skip all-day placeholders if any
       const evStart = new Date(ev.start);
       const evEnd = new Date(ev.end || ev.start);
       if (eventsOverlap(start, end, evStart, evEnd)) return false;
     }
     return true;
-  } catch (_) { return true; }
+  } catch (e) {
+    // If calendar is unavailable, assume free to avoid hard failures
+    return true;
+  }
 }
 
-// Try to place a block starting near startHH for a given weekday; slide by stepMinutes until latestEndHH
-function tryPlaceBlock(calendar, baseStart, weekdayName, startHH, hours, weekOffset = 0, stepMinutes = 15, latestEndHH = '22:00') {
-  const latestEnd = latestEndHH || '22:00';
-  let cur = dateForWeekdayFrom(baseStart, weekdayName, startHH, weekOffset);
-  const latest = dateForWeekdayFrom(baseStart, weekdayName, latestEnd, weekOffset);
-  const durMs = (hours || 1) * 3600000;
-  while (cur.getTime() + durMs <= latest.getTime()) {
+// Try to place a block on a given weekday starting at startHH (e.g., '17:00')
+// for `hours` duration. Iterate by stepMinutes until `latestEndHH`.
+function tryPlaceBlock(calendar, baseStart, weekdayName, startHH, hours, weekOffset = 0, stepMinutes = 15, latestEndHH = '21:30') {
+  const start = dateForWeekdayFrom(baseStart, weekdayName, startHH, weekOffset);
+  const latestEnd = dateForWeekdayFrom(baseStart, weekdayName, latestEndHH, weekOffset);
+  const durMs = Math.max(0.25, hours) * 60 * 60 * 1000;
+  let cur = new Date(start);
+  while (cur.getTime() + durMs <= latestEnd.getTime()) {
     const end = new Date(cur.getTime() + durMs);
-    if (isSlotFree(calendar, cur, end)) return { start: new Date(cur), end };
-    cur = new Date(cur.getTime() + stepMinutes * 60000);
+    if (isSlotFree(calendar, cur, end)) {
+      return { start: new Date(cur), end };
+    }
+    cur = new Date(cur.getTime() + stepMinutes * 60 * 1000);
   }
   return null;
 }
 
+// Provide a small set of study windows based on productivity preference
 function allocateStudyBlocks(pref = 'morning') {
-  // Return [day, startHH, endHH] templates
-  const sets = {
-    morning: [ ['Monday','09:00','11:00'], ['Tuesday','09:00','11:00'], ['Thursday','09:00','11:00'], ['Saturday','10:00','12:00'] ],
-    afternoon: [ ['Monday','14:00','16:00'], ['Wednesday','14:00','16:00'], ['Friday','14:00','16:00'], ['Sunday','13:00','15:00'] ],
-    evening: [ ['Monday','19:00','21:00'], ['Wednesday','19:00','21:00'], ['Thursday','19:00','21:00'], ['Sunday','18:00','20:00'] ]
+  const blocks = {
+    morning: [
+      ['Monday', '09:00', '11:00'],
+      ['Tuesday', '09:00', '11:00'],
+      ['Thursday', '09:00', '11:00'],
+      ['Saturday', '10:00', '12:00']
+    ],
+    afternoon: [
+      ['Monday', '14:00', '16:00'],
+      ['Wednesday', '15:00', '17:00'],
+      ['Friday', '14:00', '16:00'],
+      ['Sunday', '13:00', '15:00']
+    ],
+    evening: [
+      ['Monday', '19:00', '21:00'],
+      ['Tuesday', '19:00', '21:00'],
+      ['Thursday', '19:00', '21:00'],
+      ['Sunday', '18:00', '20:00']
+    ]
   };
-  return sets[pref] || sets.morning;
+  return blocks[pref] || blocks.morning;
 }
 
-// Parse clubs text like: "Soccer Tue 18:00-20:00, Volleyball Sat 10am-12pm" or "monday from 6pm to 8pm - Basketball"
-function parseClubsInputToBlocks(text, knownClubs = []) {
-  const out = [];
-  if (!text) return out;
-  const parts = String(text).split(/\s*[,;\n]+\s*/);
-  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  for (let raw of parts) {
-    if (!raw) continue;
-    const day = detectWeekday(raw);
-    const tr = parseTimeRangeFlexible(raw) || parseTimeRange(raw);
-    if (!day || !tr) continue;
-    let name = '';
-    // Try to find a known club name in the fragment
-    const lower = raw.toLowerCase();
-    for (const k of knownClubs) {
-      if (lower.includes(String(k).toLowerCase())) { name = k; break; }
-    }
-    // If not found, extract first capitalized word(s) before day
-    if (!name) {
-      const beforeDay = raw.split(new RegExp(day, 'i'))[0] || raw;
-      const m = beforeDay.match(/([A-Z][A-Za-z0-9&\- ]{2,})/);
-      name = (m && m[1].trim()) || 'Club Activity';
-    }
-    out.push({ name, day, start: tr.start, end: tr.end });
+// New helpers: natural date range parsing for deletion commands
+function monthNameToIndex(name) {
+  const map = {
+    january:0,february:1,march:2,april:3,may:4,june:5,
+    july:6,august:7,september:8,october:9,november:10,december:11,
+    jan:0,feb:1,mar:2,apr:3,may_:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11
+  };
+  const key = String(name||'').toLowerCase().replace(/\.$/,'')
+  if (key === 'may') return 4; // disambiguate may
+  return map[key] ?? null;
+}
+
+function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function endOfDay(d){ const x = new Date(d); x.setHours(23,59,59,999); return x; }
+
+function lastDayOfMonth(year, monthIndex) { return new Date(year, monthIndex + 1, 0).getDate(); }
+
+function weekRangeContaining(date) {
+  const d = new Date(date);
+  const dow = d.getDay(); // 0 Sun..6 Sat
+  // We use Monday-Sunday range
+  const monday = new Date(d); const offset = (dow === 0 ? -6 : 1 - dow); monday.setDate(d.getDate() + offset); monday.setHours(0,0,0,0);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6); sunday.setHours(23,59,59,999);
+  return { start: monday, end: sunday };
+}
+
+function firstWeekOfMonth(year, m) {
+  // week that contains the 1st of the month
+  return weekRangeContaining(new Date(year, m, 1));
+}
+function lastWeekOfMonth(year, m) {
+  // week that contains the last day of the month
+  const last = new Date(year, m, lastDayOfMonth(year, m));
+  return weekRangeContaining(last);
+}
+function monthRange(year, m) {
+  return {
+    start: startOfDay(new Date(year, m, 1)),
+    end: endOfDay(new Date(year, m, lastDayOfMonth(year, m)))
+  };
+}
+
+function parseDateFromMonthDay(text, defaultYear) {
+  // e.g., "Sep 15 2025", "September 20", "9/21/2025"
+  const t = String(text||'').trim();
+  // Month name + day [year]
+  let m = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
+  if (m) {
+    const mon = monthNameToIndex(m[1]); const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : defaultYear;
+    return new Date(yr, mon, day);
   }
-  return out;
-}
-
-async function clearAllEvents(calendar) {
-  try {
-    const evs = calendar.getEvents();
-    for (const ev of evs) {
-      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
-      ev.remove();
-    }
-    appendMessage('bot', randomAck('cleared all events'));
-  } catch (e) {
-    appendMessage('bot', 'Sorry — failed to clear events.');
+  // Numeric like 9/21[/2025]
+  m = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
+  if (m) {
+    const mon = parseInt(m[1],10)-1; const day = parseInt(m[2],10); let yr = m[3] ? parseInt(m[3],10) : defaultYear; if (yr < 100) yr += 2000;
+    return new Date(yr, mon, day);
   }
+  // ISO yyyy-mm-dd
+  m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10));
+  return null;
 }
 
-// Natural date range parsing helpers (restore previous capability)
-const monthNameToIndex = {
-  january:0,february:1,march:2,april:3,may:4,june:5,july:6,august:7,september:8,october:9,november:10,december:11,
-  jan:0,feb:1,mar:2,apr:3,may_s:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11
-};
-
-function firstWeekOfMonth(year, monthIdx) {
-  const d = new Date(year, monthIdx, 1);
-  const dow = d.getDay();
-  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
-  d.setDate(d.getDate() + diffToMonday);
-  const start = new Date(d); start.setHours(0,0,0,0);
-  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
-  return { start, end };
-}
-
-function lastWeekOfMonth(year, monthIdx) {
-  const lastDay = new Date(year, monthIdx + 1, 0); // last day of month
-  const dow = lastDay.getDay();
-  const lastMonday = new Date(lastDay);
-  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
-  lastMonday.setDate(lastMonday.getDate() + diffToMonday);
-  const start = new Date(lastMonday); start.setHours(0,0,0,0);
-  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
-  return { start, end };
-}
-
-function wholeMonthRange(year, monthIdx) {
-  const start = new Date(year, monthIdx, 1, 0,0,0,0);
-  const end = new Date(year, monthIdx + 1, 0, 23,59,59,999);
-  return { start, end };
-}
-
-function parseDateFromMonthDay(text, baseYear) {
-  const m = String(text).toLowerCase().match(/(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,\s*(\d{4}))?/i);
-  if (!m) return null;
-  const monthName = m[1].toLowerCase();
-  const monthIdx = monthNameToIndex[monthName.replace(/\s+/g,'_')];
-  const day = parseInt(m[2], 10);
-  const year = m[3] ? parseInt(m[3], 10) : baseYear;
-  if (monthIdx == null || !day || !year) return null;
-  return new Date(year, monthIdx, day, 0,0,0,0);
-}
-
-function parseDateRangeNatural(text, baseAnchor = new Date()) {
-  const t = String(text || '').toLowerCase();
-  const year = baseAnchor.getFullYear();
-
-  // explicit from X to Y
-  const between = t.match(/from\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)\s+(?:to|\-)\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)/i);
-  if (between) {
-    const s = parseDateFromMonthDay(between[1], year);
-    const e = parseDateFromMonthDay(between[2], year);
-    if (s && e) { const end = new Date(e); end.setHours(23,59,59,999); return { start: s, end }; }
+function parseDateRangeNatural(text, reference = new Date(), baseSemester = (scheduleWizard?.data?.baseSemester || null)) {
+  const refYear = baseSemester?.start?.getFullYear?.() || reference.getFullYear();
+  const s = String(text||'');
+  // from X to Y
+  let m = s.match(/from\s+([^,]+?)\s+to\s+([^,]+)/i);
+  if (m) {
+    const d1 = parseDateFromMonthDay(m[1], refYear);
+    const d2 = parseDateFromMonthDay(m[2], refYear);
+    if (d1 && d2) return { start: startOfDay(d1), end: endOfDay(d2) };
   }
-
-  // week of <month day>
-  const weekOf = t.match(/week\s+of\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)/i);
-  if (weekOf) {
-    const on = parseDateFromMonthDay(weekOf[1], year);
-    if (on) {
-      const dow = on.getDay();
-      const monday = new Date(on);
-      const diffToMonday = (dow === 0 ? -6 : 1 - dow);
-      monday.setDate(monday.getDate() + diffToMonday);
-      const start = new Date(monday); start.setHours(0,0,0,0);
-      const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
-      return { start, end };
-    }
+  // last/first week of MONTH [YEAR]
+  m = s.match(/(last|first)\s+week\s+of\s+(\w+)(?:\s+(\d{4}))?/i);
+  if (m) {
+    const which = m[1].toLowerCase(); const monIdx = monthNameToIndex(m[2]); const yr = m[3] ? parseInt(m[3],10) : refYear;
+    if (monIdx != null) return which === 'last' ? lastWeekOfMonth(yr, monIdx) : firstWeekOfMonth(yr, monIdx);
   }
-
-  // first/last week of <month>
-  const fl = t.match(/(first|last)\s+week\s+of\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)/i);
-  if (fl) {
-    const which = fl[1].toLowerCase();
-    const mname = fl[2].toLowerCase();
-    const midx = monthNameToIndex[mname.replace(/\s+/g,'_')];
-    if (midx != null) {
-      return which === 'first' ? firstWeekOfMonth(year, midx) : lastWeekOfMonth(year, midx);
-    }
+  // week of MONTH DAY [YEAR]
+  m = s.match(/week\s+of\s+(\w+)\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
+  if (m) {
+    const monIdx = monthNameToIndex(m[1]); const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : refYear;
+    if (monIdx != null) return weekRangeContaining(new Date(yr, monIdx, day));
   }
-
-  // whole month like "September"
-  const monthOnly = t.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i);
-  if (monthOnly) {
-    const midx = monthNameToIndex[monthOnly[1].toLowerCase()];
-    if (midx != null) return wholeMonthRange(year, midx);
+  // in MONTH [YEAR]
+  m = s.match(/\b(in|during)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?/i);
+  if (m) {
+    const monIdx = monthNameToIndex(m[2]); const yr = m[3] ? parseInt(m[3],10) : refYear; if (monIdx != null) return monthRange(yr, monIdx);
   }
-
-  // Fallback: current week
-  const dow = baseAnchor.getDay();
-  const monday = new Date(baseAnchor);
-  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
-  monday.setDate(monday.getDate() + diffToMonday);
-  const start = new Date(monday); start.setHours(0,0,0,0);
-  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
-  return { start, end };
+  // last week (relative)
+  if (/\blast\s+week\b/i.test(s)) {
+    const last = new Date(reference); last.setDate(reference.getDate()-7); return weekRangeContaining(last);
+  }
+  return null;
 }
 
-function determineCategoriesFromPhrase(text) {
-  const s = String(text||'').toLowerCase();
-  const cats = new Set();
-  if (/club|society|practice|team/.test(s)) cats.add('club');
-  if (/study|revision|reading/.test(s)) cats.add('study');
-  if (/job|work|shift|baito/.test(s)) cats.add('job');
-  if (/project|research|thesis|capstone/.test(s)) cats.add('project');
-  if (/course|class|lecture|exercise|lab|tutorial|seminar/.test(s)) cats.add('course');
-  if (/commute/.test(s)) cats.add('commute');
-  if (/all\s+events|everything/.test(s)) cats.add('all');
-  if (!cats.size) cats.add('all');
-  return Array.from(cats);
+function determineCategoriesFromPhrase(phrase) {
+  const t = String(phrase||'').toLowerCase();
+  const cats = [];
+  if (/club|activity|activities/.test(t)) cats.push('clubs');
+  if (/study|revision|reading/.test(t)) cats.push('study');
+  if (/job|work|shift|baito|commute/.test(t)) cats.push('job');
+  if (/project|research|thesis|capstone/.test(t)) cats.push('project');
+  if (/course|lecture|exercise|class/.test(t)) cats.push('course');
+  if (!cats.length) cats.push('general');
+  return cats;
 }
 
 function eventMatchesCategories(ev, categories) {
-  const title = (ev.title || '').toLowerCase();
-  const checks = {
-    club: /(club|soccer|basketball|volley|tennis|band|music|activity)/,
-    study: /(study\s*session|study|revision|reading)/,
-    job: /(part-?time\s*job|job|work|shift|baito)/,
-    project: /(project\s*work|project|research|thesis|capstone)/,
-    course: /(lecture|exercise|seminar|tutorial|lab|[A-Z]{2,}\d{2,})/,
-    commute: /(commute\s*(to|home)?)/,
-    all: /.*/
-  };
-  return categories.some(cat => (checks[cat] || /.*/).test(title));
+  const title = (ev.title||'').toLowerCase();
+  const color = ev.backgroundColor || ev.color || '';
+  const has = (k)=>categories.includes(k);
+  if (has('course') && (/lecture|exercise/.test(title))) return true;
+  if (has('study') && /study/.test(title)) return true;
+  if (has('job') && (/(job|work|shift|commute)/.test(title))) return true;
+  if (has('project') && /project/.test(title)) return true;
+  if (has('clubs') && (/club/.test(title) || color === '#0ea5e9')) return true;
+  if (has('general') && !( /lecture|exercise|study|job|work|shift|project|commute|club/.test(title) )) return true;
+  return false;
 }
 
 async function deleteActivitiesInRange(categoryPhrase, timePhrase, calendar) {
-  const base = (scheduleWizard?.data?.baseSemester?.start) || new Date();
-  const { start, end } = parseDateRangeNatural(timePhrase || '', base);
-  const cats = determineCategoriesFromPhrase(categoryPhrase || '');
-  const evs = calendar.getEvents().filter(ev => {
-    const s = new Date(ev.start);
-    return s >= start && s <= end && eventMatchesCategories(ev, cats);
-  });
-  let count = 0;
-  for (const ev of evs) {
-    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
-    ev.remove(); count++;
+  const range = parseDateRangeNatural(timePhrase, new Date());
+  if (!range) { appendMessage('bot', "I couldn't understand the time range. Try phrases like 'last week of September', 'week of Sep 15', or 'from Sep 10 to Sep 20'."); return; }
+  const cats = determineCategoriesFromPhrase(categoryPhrase);
+  const events = calendar.getEvents();
+  const within = (d)=>{ const x = new Date(d).getTime(); return x >= range.start.getTime() && x <= range.end.getTime(); };
+  let removed = 0;
+  for (const ev of events) {
+    const s = ev.start; if (!s) continue; if (!within(s)) continue; if (!eventMatchesCategories(ev, cats)) continue;
+    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
+    ev.remove(); removed++;
   }
-  appendMessage('bot', `${randomAck('deleted')}: ${count} event(s) ${cats.includes('all') ? '' : `in ${cats.join(', ')}`} for ${start.toLocaleDateString()}–${end.toLocaleDateString()}`.trim());
+  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+  if (removed === 0) appendMessage('bot', 'No matching events found in that time range.');
+  else appendMessage('bot', `${randomAck()} — deleted ${removed} ${removed===1?'event':'events'} in that range.`);
 }
-
-// Handle user input at the top level
-async function handleUserInput(msg, calendar) {
-  const text = String(msg || '').trim();
-  if (!text) return;
-
-  // If wizard is active, route to it
-  if (scheduleWizard.active) {
-    const handled = await handleScheduleWizardAnswer(text, calendar);
-    if (!handled) appendMessage('bot', "Sorry, I didn't catch that. Could you rephrase?");
-    return;
-  }
-
-  // Commands
-  if (/^(clear|delete)\s+all\s+events$/i.test(text)) { await clearAllEvents(calendar); return; }
-  if (/^(start|generate|make).*(plan|schedule)/i.test(text) || /schedule\s+wizard/i.test(text)) {
-    appendMessage('bot', 'Awesome — I\'ll help you plan. I\'ll ask a few quick questions.');
-    await startScheduleWizard(calendar);
-    return;
-  }
-
-  // Natural delete within a time range/category
-  if (/^(delete|remove)\b/i.test(text)) {
-    await deleteActivitiesInRange(text, text, calendar);
-    return;
-  }
-
-  // Lightweight local add command to avoid AI dependency
-  if (/^add\b/i.test(text) || /^please\s+add\b/i.test(text)) {
-    const ok = await addGeneralEventFromText(text, calendar);
-    if (ok) return;
-  }
-
-  // Fallback to AI small talk/help
-  showLoading();
-  const reply = await askChatGPT([
-    { role: 'system', content: 'You are a friendly student scheduling assistant. Keep answers short and helpful.' },
-    { role: 'user', content: text }
-  ]);
-  hideLoading();
-  if (reply) appendMessage('bot', reply);
-  else appendMessage('bot', 'Hmm, I could not reach the AI right now. Try again or say "generate schedule".');
-}
-
-// Attach UI listeners
-(function setupChatUI() {
-  if (!chatInput || !sendBtn || !chatMessages) return;
-  // Greet
-  appendMessage('bot', 'Hi! I can build your two-week schedule. Type "generate schedule" to start, or say "add <title> Tue 3-4pm" to add an event.');
-
-  const getCal = () => window.calendar;
-  sendBtn.addEventListener('click', async () => {
-    const val = chatInput.value.trim();
-    if (!val) return;
-    appendMessage('user', val);
-    chatInput.value = '';
-    await handleUserInput(val, getCal());
-  });
-  chatInput.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      const val = chatInput.value.trim();
-      if (!val) return;
-      appendMessage('user', val);
-      chatInput.value = '';
-      await handleUserInput(val, getCal());
-    }
-  });
-
-  // Preload memory (non-blocking)
-  try { loadUserMemory(); } catch {}
-})();
