@@ -1158,364 +1158,51 @@ async function loadCourses() {
   return await res.json();
 }
 
-// Utility to add course schedule to calendar
-async function addCourseToCalendar(course, group, calendar) {
-  // helper to persist then add
-  async function saveAndAdd({ title, startDate, endDate, description, color }) {
-    try {
-      const saved = await window.authSystem.createEvent({
-        title,
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-        allDay: false,
-        backgroundColor: color,
-        description: description || ''
-      });
-      rememberActivity('course', title, startDate, endDate)
-      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-      calendar.addEvent({
-        id: saved.id,
-        title: saved.title,
-        start: saved.start_date,
-        end: saved.end_date,
-        allDay: saved.all_day,
-        backgroundColor: saved.color,
-        extendedProps: { description: saved.description }
-      });
-    } catch (e) {
-      console.error('Failed to persist course event, adding locally:', e);
-      calendar.addEvent({
-        title,
-        start: startDate,
-        end: endDate,
-        description,
-        backgroundColor: color,
-        borderColor: color,
-        textColor: '#ffffff'
-      });
+// Find a course by matching name or short name within free text
+function findCourseByText(text, courses) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const t = norm(text);
+  let best = null;
+  for (const c of (courses || [])) {
+    const names = [c.course, c.short_name].filter(Boolean).map(norm);
+    for (const n of names) {
+      if (!n) continue;
+      if (t.includes(n) || n.includes(t)) { best = c; break; }
+      // token overlap
+      const tn = new Set(t.split(' '));
+      const nn = new Set(n.split(' '));
+      const overlap = [...nn].filter(x => tn.has(x));
+      if (overlap.length >= Math.min(2, nn.size)) { best = c; break; }
     }
+    if (best) break;
   }
-
-  // Handle lectures
-  if (course.lecture) {
-    if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
-      // Grouped lectures
-      if (course.lecture[group]) {
-        for (const [lecturer, day, start, end] of course.lecture[group]) {
-          const startDate = nextWeekdayDate(day, start);
-          const endDate = nextWeekdayDate(day, end);
-          await saveAndAdd({
-            title: `${course.short_name} Lecture`,
-            startDate,
-            endDate,
-            description: `Lecturer: ${lecturer}`,
-            color: '#3788d8'
-          });
-        }
-      }
-    } else {
-      // Single array
-      for (const [lecturer, day, start, end] of course.lecture) {
-        const startDate = nextWeekdayDate(day, start);
-        const endDate = nextWeekdayDate(day, end);
-        await saveAndAdd({
-          title: `${course.short_name} Lecture`,
-          startDate,
-          endDate,
-          description: `Lecturer: ${lecturer}`,
-          color: '#3788d8'
-        });
-      }
-    }
-  }
-  // Handle exercises
-  if (course.exercise) {
-    if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
-      // Grouped exercises
-      if (course.exercise[group]) {
-        for (const [lecturer, day, start, end] of course.exercise[group]) {
-          const startDate = nextWeekdayDate(day, start);
-          const endDate = nextWeekdayDate(day, end);
-          await saveAndAdd({
-            title: `${course.short_name} Exercise`,
-            startDate,
-            endDate,
-            description: `Lecturer: ${lecturer}`,
-            color: '#28a745'
-          });
-        }
-      }
-    } else {
-      // Single array
-      for (const [lecturer, day, start, end] of course.exercise) {
-        const startDate = nextWeekdayDate(day, start);
-        const endDate = nextWeekdayDate(day, end);
-        await saveAndAdd({
-          title: `${course.short_name} Exercise`,
-          startDate,
-          endDate,
-          description: `Lecturer: ${lecturer}`,
-          color: '#28a745'
-        });
-      }
-    }
-  }
+  return best;
 }
 
-// Utility to get next date for a weekday from today
-function nextWeekdayDate(weekday, time) {
-  const days = {
-    'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0
-  };
-  const today = new Date();
-  let dayNum = days[weekday];
-  let result = new Date(today);
-  result.setHours(...time.split(':').map(Number), 0, 0);
-  let diff = (dayNum - today.getDay() + 7) % 7;
-  if (diff === 0 && result < today) diff = 7;
-  result.setDate(today.getDate() + diff);
-  return result;
-}
-
-// Intercept user input for course selection
-let pendingCourse = null;
-let pendingGroup = null;
-let pendingClashEvents = null;
-let pendingClashMsg = '';
-let pendingGeneralEvent = false; // Track if waiting for general event info
-
-// Utility to check for event clashes
-function checkClashes(events, calendar) {
-  let clashes = [];
-  events.forEach(ev => {
-    let evStart = new Date(ev.start);
-    let evEnd = new Date(ev.end);
-    let overlapping = calendar.getEvents().some(existing => {
-      let exStart = new Date(existing.start);
-      let exEnd = new Date(existing.end);
-      // Overlap if start < existing end and end > existing start
-      return evStart < exEnd && evEnd > exStart;
-    });
-    if (overlapping) {
-      clashes.push(ev.title + ' (' + evStart.toLocaleString() + ' - ' + evEnd.toLocaleString() + ')');
-    }
-  });
-  return clashes;
-}
-
-// Utility to delete events by name
-function deleteEvent(eventName, calendar) {
-  const allEvents = calendar.getEvents();
-  const matchingEvents = allEvents.filter(event => 
-    event.title.toLowerCase().includes(eventName.toLowerCase())
-  );
-  if (matchingEvents.length === 0) {
-    appendMessage('bot', `No events found matching "${eventName}". Try checking the exact event name.`);
-    return;
-  }
-  // delete from DB if possible
-  (async () => {
-    for (const ev of matchingEvents) {
-      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
-      ev.remove();
-    }
-    try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  })();
-  if (matchingEvents.length === 1) {
-    appendMessage('bot', `${randomAck()} — deleted "${matchingEvents[0].title}".`);
-    return;
-  }
-  appendMessage('bot', `${randomAck()} — deleted ${matchingEvents.length} events matching "${eventName}": ${matchingEvents.map(e => e.title).join(', ')}.`);
-}
-
-// New: Clear all events from the calendar (and DB when possible)
-async function clearAllEvents(calendar) {
-  const evs = calendar.getEvents();
-  if (!evs.length) {
-    appendMessage('bot', 'There are no events to delete.');
-    return;
-  }
-  let removed = 0;
-  for (const ev of evs) {
-    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
-    ev.remove();
-    removed++;
-  }
-  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  appendMessage('bot', `${randomAck()} — cleared ${removed} event(s) from your schedule.`);
-}
-
-// Utility to handle update/change commands
-async function handleUpdateCommand(msg, calendar) {
-  const lowerMsg = msg.toLowerCase();
-  
-  // Check for course group changes (e.g., "change machine shop from group B to A")
-  const courseGroupMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*from\s*group\s*([AB])\s*to\s*([AB])/i);
-  if (courseGroupMatch) {
-    const courseName = courseGroupMatch[2].trim();
-    const fromGroup = `Group ${courseGroupMatch[3].toUpperCase()}`;
-    const toGroup = `Group ${courseGroupMatch[4].toUpperCase()}`;
-    
-    await updateCourseGroup(courseName, fromGroup, toGroup, calendar);
-    return;
-  }
-  
-  // Check for time changes (e.g., "change volleyball practice time from 7pm-9pm to 8pm-10pm")
-  const timeChangeMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*time\s*from\s*(.+?)\s*to\s*(.+)/i);
-  if (timeChangeMatch) {
-    const eventName = timeChangeMatch[2].trim();
-    const fromTime = timeChangeMatch[3].trim();
-    const toTime = timeChangeMatch[4].trim();
-    
-    await updateEventTime(eventName, fromTime, toTime, calendar);
-    return;
-  }
-  
-  // Check for general time changes without "time" keyword (e.g., "change volleyball practice from 7pm-9pm to 8pm-10pm")
-  const generalTimeMatch = lowerMsg.match(/(change|update|modify)?\s*(.+?)\s*from\s*(\d+(?::\d+)?(?:am|pm)?(?:\s*-\s*\d+(?::\d+)?(?:am|pm)?)?)\s*to\s*(\d+(?::\d+)?(?:am|pm)?(?:\s*-\s*\d+(?::\d+)?(?:am|pm)?)?)/i);
-  if (generalTimeMatch) {
-    const eventName = generalTimeMatch[2].trim();
-    const fromTime = generalTimeMatch[3].trim();
-    const toTime = generalTimeMatch[4].trim();
-    
-    await updateEventTime(eventName, fromTime, toTime, calendar);
-    return;
-  }
-  
-  // If no specific pattern matched, provide guidance
-  appendMessage('bot', 'I can help you update events! Try these formats:\n• "change [course] from group A to B"\n• "change [event] time from [old time] to [new time]"\n• Examples: "change machine shop from group B to A" or "change volleyball practice from 7pm-9pm to 8pm-10pm"');
-}
-
-// Update course group (delete old group events and add new group events)
-async function updateCourseGroup(courseName, fromGroup, toGroup, calendar) {
+// Handle adding a course (both lecture and exercise by default)
+async function handleAddCourseIntent(msg, calendar) {
   const courses = await loadCourses();
-  const matchedCourse = courses.find(c => 
-    courseName.includes(c.course.toLowerCase()) ||
-    courseName.includes(c.short_name.toLowerCase()) ||
-    c.course.toLowerCase().includes(courseName) ||
-    c.short_name.toLowerCase().includes(courseName)
-  );
-  
-  if (!matchedCourse) {
-    appendMessage('bot', `I couldn't find a course matching "${courseName}". Please check the course name.`);
-    return;
+  const course = findCourseByText(msg, courses);
+  if (!course) return false; // not a course add intent
+
+  // If grouped (lecture or exercise has groups), ask for group
+  const hasGroupedLect = course.lecture && typeof course.lecture === 'object' && !Array.isArray(course.lecture);
+  const hasGroupedEx = course.exercise && typeof course.exercise === 'object' && !Array.isArray(course.exercise);
+  if (hasGroupedLect || hasGroupedEx) {
+    pendingCourse = course;
+    const groups = new Set([
+      ...(hasGroupedLect ? Object.keys(course.lecture) : []),
+      ...(hasGroupedEx ? Object.keys(course.exercise) : [])
+    ]);
+    appendMessage('bot', `Which group are you in for ${course.short_name || course.course}? ${[...groups].join(' or ')}?`);
+    return true;
   }
-  
-  // Find and delete events from the old group
-  const allEvents = calendar.getEvents();
-  const oldEvents = allEvents.filter(event => 
-    event.title.includes(matchedCourse.short_name)
-  );
-  
-  if (oldEvents.length === 0) {
-    appendMessage('bot', `No events found for ${matchedCourse.short_name}. Add the course first, then change groups.`);
-    return;
-  }
-  
-  // Remove old events (calendar + DB)
-  for (const event of oldEvents) {
-    try {
-      if (event.id) {
-        await window.authSystem.deleteEvent(event.id);
-      }
-    } catch (e) {
-      console.warn('Failed to delete event from DB, removing locally:', e);
-    }
-    event.remove();
-  }
-  
-  // Add new group events (persisting to DB)
-  await addCourseToCalendar(matchedCourse, toGroup, calendar);
+
+  // Non-grouped: add both lecture and exercise if present
+  await addCourseToCalendar(course, null, calendar);
   try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  appendMessage('bot', `${randomAck()} — updated ${matchedCourse.short_name} from ${fromGroup} to ${toGroup}.`);
-}
-
-// Update event time
-async function updateEventTime(eventName, fromTime, toTime, calendar) {
-  // use memory to resolve vague references like "my practice"
-  let resolvedName = eventName
-  const lower = eventName.toLowerCase()
-  if (/my\s+(practice|training|gym|club|job|shift)/i.test(eventName)) {
-    const typeMap = { practice: 'fitness', training: 'fitness', gym: 'fitness', club: 'club', job: 'job', shift: 'job' }
-    const key = (lower.match(/practice|training|gym|club|job|shift/)||[])[0]
-    const type = typeMap[key] || null
-    const candidates = (sessionMemory.activities||[]).filter(a => !type || a.type === type)
-    if (candidates.length) resolvedName = candidates[candidates.length - 1].name
-  }
-  const allEvents = calendar.getEvents();
-  const matchingEvents = allEvents.filter(event => 
-    event.title.toLowerCase().includes(resolvedName.toLowerCase())
-  );
-  if (matchingEvents.length === 0) {
-    appendMessage('bot', `No events found matching "${eventName}".`);
-    return;
-  }
-  const newTimes = parseTimeRange(toTime);
-  if (!newTimes) {
-    appendMessage('bot', `I couldn't understand the new time "${toTime}". Please use format like "7pm-9pm" or "19:00-21:00".`);
-    return;
-  }
-  let updatedCount = 0;
-  for (const event of matchingEvents) {
-    const eventDate = new Date(event.start);
-    const newStart = new Date(eventDate);
-    const newEnd = new Date(eventDate);
-    newStart.setHours(newTimes.startHour, newTimes.startMinute, 0, 0);
-    newEnd.setHours(newTimes.endHour, newTimes.endMinute, 0, 0);
-    // Update UI
-    event.setStart(newStart);
-    event.setEnd(newEnd);
-    // Persist to DB
-    try {
-      if (event.id && window.authSystem?.updateEvent) {
-        await window.authSystem.updateEvent(event.id, {
-          title: event.title,
-          start: newStart.toISOString(),
-          end: newEnd.toISOString(),
-          allDay: !!event.allDay,
-          backgroundColor: event.backgroundColor,
-          description: event.extendedProps?.description || ''
-        })
-      }
-    } catch (e) { console.warn('Failed to persist update:', e) }
-    // Update memory entry for this activity name
-    rememberActivity('general', event.title, newStart, newEnd)
-    updatedCount++;
-  }
-  try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-  appendMessage('bot', `${randomAck()} — updated ${updatedCount} event(s) matching "${resolvedName}" to ${toTime}.`);
-}
-
-// Utility to parse time range like "7pm-9pm" or "19:00-21:00"
-function parseTimeRange(timeStr) {
-  // Handle formats like "7pm-9pm", "7:30pm-9:30pm", "19:00-21:00"
-  const timeMatch = timeStr.match(/(\d+)(?::(\d+))?\s*(am|pm)?\s*-\s*(\d+)(?::(\d+))?\s*(am|pm)?/i);
-  if (!timeMatch) return null;
-  
-  let startHour = parseInt(timeMatch[1]);
-  const startMinute = parseInt(timeMatch[2] || '0');
-  const startPeriod = timeMatch[3];
-  
-  let endHour = parseInt(timeMatch[4]);
-  const endMinute = parseInt(timeMatch[5] || '0');
-  const endPeriod = timeMatch[6];
-  
-  // Convert to 24-hour format
-  if (startPeriod) {
-    if (startPeriod.toLowerCase() === 'pm' && startHour !== 12) startHour += 12;
-    if (startPeriod.toLowerCase() === 'am' && startHour === 12) startHour = 0;
-  }
-  
-  if (endPeriod) {
-    if (endPeriod.toLowerCase() === 'pm' && endHour !== 12) endHour += 12;
-    if (endPeriod.toLowerCase() === 'am' && endHour === 12) endHour = 0;
-  } else if (startPeriod) {
-    // If start has period but end doesn't, assume same period for end
-    if (startPeriod.toLowerCase() === 'pm' && endHour !== 12) endHour += 12;
-    if (startPeriod.toLowerCase() === 'am' && endHour === 12) endHour = 0;
-  }
-  
-  return { startHour, startMinute, endHour, endMinute };
+  appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (lecture${course.exercise && course.exercise.length ? ' + exercise' : ''}).`);
+  return true;
 }
 
 async function handleUserInput(msg, calendar) {
@@ -1528,6 +1215,30 @@ async function handleUserInput(msg, calendar) {
   }
   if (scheduleWizard.active) {
     const handled = await handleScheduleWizardAnswer(msg, calendar);
+    if (handled) return;
+  }
+  // Course add follow-up like "lecture and exercise"
+  if (pendingCourse && /(lecture\s*(and|\+)?\s*exercise|both)/i.test(lower)) {
+    // If grouped, still need a group selection
+    const hasGroupedLect = pendingCourse.lecture && typeof pendingCourse.lecture === 'object' && !Array.isArray(pendingCourse.lecture);
+    const hasGroupedEx = pendingCourse.exercise && typeof pendingCourse.exercise === 'object' && !Array.isArray(pendingCourse.exercise);
+    if (hasGroupedLect || hasGroupedEx) {
+      const groups = new Set([
+        ...(hasGroupedLect ? Object.keys(pendingCourse.lecture) : []),
+        ...(hasGroupedEx ? Object.keys(pendingCourse.exercise) : [])
+      ]);
+      appendMessage('bot', `Got it — please specify your group for ${pendingCourse.short_name || pendingCourse.course}: ${[...groups].join(' or ')}.`);
+      return;
+    }
+    await addCourseToCalendar(pendingCourse, null, calendar);
+    try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
+    appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name || pendingCourse.course}.`);
+    pendingCourse = null; pendingGroup = null;
+    return;
+  }
+  // Direct intent: add <course>
+  if (/(^|\b)(add|enroll|register)\b/i.test(lower)) {
+    const handled = await handleAddCourseIntent(msg, calendar);
     if (handled) return;
   }
   // Quick commands to clear everything
@@ -1624,17 +1335,28 @@ async function handleUserInput(msg, calendar) {
   // Check if waiting for group
   if (pendingCourse && !pendingGroup) {
     let group = null;
-    if (/A|Monday/i.test(msg)) group = 'Group A';
-    if (/B|Thursday/i.test(msg)) group = 'Group B';
+    const gm = lower.match(/group\s*([ab])/i) || lower.match(/\b([ab])\b/i);
+    if (gm) { group = `Group ${gm[1].toUpperCase()}`; }
+    // legacy hints
+    if (!group) {
+      if (/\bmon(day)?\b/i.test(msg)) group = 'Group B';
+      if (/\bthu(rs|rsday)?\b/i.test(msg)) group = 'Group A';
+    }
     if (group) {
       hideLoading();
-      addCourseToCalendar(pendingCourse, group, calendar);
-      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name} for ${group}.`);
+      await addCourseToCalendar(pendingCourse, group, calendar);
+      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name || pendingCourse.course} for ${group}.`);
       pendingCourse = null;
       pendingGroup = null;
     } else {
       hideLoading();
-      appendMessage('bot', 'Which group works for you: A (Monday) or B (Thursday)?');
+      const hasGroupedLect = pendingCourse.lecture && typeof pendingCourse.lecture === 'object' && !Array.isArray(pendingCourse.lecture);
+      const hasGroupedEx = pendingCourse.exercise && typeof pendingCourse.exercise === 'object' && !Array.isArray(pendingCourse.exercise);
+      const groups = new Set([
+        ...(hasGroupedLect ? Object.keys(pendingCourse.lecture) : []),
+        ...(hasGroupedEx ? Object.keys(pendingCourse.exercise) : [])
+      ]);
+      appendMessage('bot', `Which group works for you: ${[...groups].join(' or ')}?`);
     }
     return;
   }
