@@ -1174,6 +1174,26 @@ async function addGeneralEventFromText(text, calendar) {
     }
     if (!title) return false;
 
+    // If title matches a known course, add its scheduled meetings for 2 weeks
+    try {
+      const norm = (s)=> String(s||'').trim().toLowerCase();
+      const list = Array.isArray(window.coursesList) ? window.coursesList : [];
+      const want = norm(title);
+      const course = list.find(c => (
+        norm(c.short_name) === want ||
+        want === norm(c.course) ||
+        want.includes(norm(c.short_name)) ||
+        norm(c.course).includes(want)
+      ));
+      if (course) {
+        // Choose a base week: nearest semester start if available, else current week
+        const sem = getNearestSemester() || { start: new Date() };
+        await addCourseWeeks(course, null, sem.start, 2, calendar);
+        appendMessage('bot', `${randomAck('added course meetings')}: ${course.short_name || course.course} for the first two weeks.`);
+        return true;
+      }
+    } catch (_) { /* fall through to generic add */ }
+
     // Day and time parsing
     const day = detectWeekday(t) || new Date().toLocaleDateString(undefined, { weekday: 'long' });
     let range = parseTimeRangeFlexible(t);
