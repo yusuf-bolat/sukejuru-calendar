@@ -633,9 +633,6 @@ async function generateTwoWeekSchedule(wiz, calendar) {
     await addCourseWeeks(c, null, base, 2, calendar);
   }
 
-  // Track job hours actually scheduled per week
-  const jobSummary = { week0: 0, week1: 0 };
-
   // Helper for safe add
   async function safeAdd(title, start, end, color, description = '') {
     if (!isSlotFree(calendar, start, end)) return false;
@@ -651,67 +648,25 @@ async function generateTwoWeekSchedule(wiz, calendar) {
   // Define activity schedulers
   const scheduleJob = async () => {
     if (!wiz.data.hasJob) return;
-    const totalHours = Math.max(5, wiz.data.jobHours || 10); // per week
+    const totalHours = Math.max(5, wiz.data.jobHours || 10);
     const shiftHours = 5;
-    const requiredShifts = Math.ceil(totalHours / shiftHours);
     const commuteMin = 50; // minutes
-
-    for (let w = 0; w < 2; w++) {
-      let remainingShifts = requiredShifts;
-
-      // utility to attempt a single job placement at day/time including commute
-      const tryJobAt = async (day, startHH) => {
-        if (remainingShifts <= 0) return false;
-        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '22:00');
-        if (!slot) return false;
-        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
-        const commuteEnd = new Date(slot.start);
-        if (!isSlotFree(calendar, commuteStart, commuteEnd)) return false;
-        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
-        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
-        if (ok1 && ok2) {
-          remainingShifts -= 1;
-          jobSummary['week' + w] += shiftHours;
-          return true;
-        }
-        return false;
-      };
-
-      // Preferred windows first
-      const preferred = [
+    for (let w=0; w<2; w++) {
+      let hoursLeft = totalHours;
+      const candidateWindows = [
         ['Monday','17:00'], ['Wednesday','17:00'], ['Friday','17:00'],
         ['Saturday','12:00'], ['Sunday','12:00']
       ];
-      for (const [day, startHH] of preferred) {
-        if (remainingShifts <= 0) break;
-        await tryJobAt(day, startHH);
-      }
-
-      // Alternate windows to better hit requested hours
-      const alternates = [
-        ['Tuesday','17:00'], ['Thursday','17:00'],
-        ['Saturday','17:30'], ['Sunday','17:30'],
-        ['Tuesday','18:00'], ['Thursday','18:00']
-      ];
-      for (const [day, startHH] of alternates) {
-        if (remainingShifts <= 0) break;
-        await tryJobAt(day, startHH);
-      }
-
-      // As a last resort, scan across the week with 30-min steps for any available 5h block
-      if (remainingShifts > 0) {
-        const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-        for (const day of days) {
-          if (remainingShifts <= 0) break;
-          for (let h = 9; h <= 18 && remainingShifts > 0; h += 0.5) {
-            const hh = Math.floor(h).toString().padStart(2,'0');
-            const mm = (h % 1 ? '30' : '00');
-            const startHH = `${hh}:${mm}`;
-            // eslint-disable-next-line no-await-in-loop
-            const placed = await tryJobAt(day, startHH);
-            if (placed && remainingShifts <= 0) break;
-          }
-        }
+      for (const [day, startHH] of candidateWindows) {
+        if (hoursLeft <= 0) break;
+        const slot = tryPlaceBlock(calendar, base, day, startHH, shiftHours, w, 30, '20:30');
+        if (!slot) continue;
+        const commuteStart = new Date(slot.start.getTime() - commuteMin * 60000);
+        const commuteEnd = new Date(slot.start);
+        if (!isSlotFree(calendar, commuteStart, commuteEnd)) continue;
+        const ok1 = await safeAdd('Commute to Work', commuteStart, commuteEnd, '#475569');
+        const ok2 = ok1 && await safeAdd('Part-time Job', slot.start, slot.end, '#d97706');
+        if (ok1 && ok2) hoursLeft -= shiftHours;
       }
     }
   };
@@ -791,15 +746,9 @@ async function generateTwoWeekSchedule(wiz, calendar) {
   }
 
   const courseList = chosen.map(c => `${c.short_name || c.course} (${courseTotalCredits(c)} cr)`).join(', ');
-  let jobSummaryText = '';
-  if (wiz.data.hasJob) {
-    const req = Math.max(5, wiz.data.jobHours || 10);
-    const w0 = jobSummary.week0; const w1 = jobSummary.week1;
-    jobSummaryText = ` Job hours scheduled: week 1 ${w0}h, week 2 ${w1}h (requested ${req}h/week).`;
-  }
   appendMessage('bot', `${randomAck('your schedule is ready!')} I planned the first two weeks starting ${base.toLocaleDateString()}.
 Courses (${total} credits): ${courseList || 'none found for that semester'}.
-I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.${jobSummaryText}`);
+I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/study/project according to your priorities.`);
   wiz.active = false;
   wiz.step = 'idle';
 }
@@ -849,6 +798,63 @@ async function safeFetchJSON(input, init) {
   return res.json();
 }
 
+// Simple JSON ping with timeout
+async function pingJSON(url, timeoutMs = 2500) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    const ct = r.headers.get('content-type') || '';
+    return r.ok && ct.includes('application/json');
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Resolve API base URL for /api calls. Supports:
+// 1) Same-origin (when served via a server)
+// 2) Global window.API_BASE
+// 3) localStorage apiBase
+// 4) Prompt the user once to provide a deployed base URL
+let __apiBasePromise;
+async function resolveApiBase() {
+  if (__apiBasePromise) return __apiBasePromise;
+  __apiBasePromise = (async () => {
+    // 1) Same-origin health check (works in vercel dev/deploy)
+    if (location.protocol.startsWith('http')) {
+      if (await pingJSON('/api/health')) return '';
+    }
+    // 2) window.API_BASE (set in index.html or elsewhere)
+    const globalBase = (typeof window !== 'undefined' && window.API_BASE) ? String(window.API_BASE).replace(/\/$/,'') : '';
+    if (globalBase) {
+      if (await pingJSON(`${globalBase}/api/health`)) return globalBase;
+    }
+    // 3) localStorage
+    try {
+      const stored = localStorage.getItem('apiBase') || '';
+      if (stored && await pingJSON(`${stored.replace(/\/$/,'')}/api/health`)) return stored.replace(/\/$/,'');
+    } catch {}
+    // 4) Ask the user once
+    try {
+      const hint = 'Enter your deployed API base URL (e.g., https://your-app.vercel.app). I will save it for next time.';
+      const provided = window.prompt(hint, '');
+      if (provided) {
+        const base = provided.trim().replace(/\/$/,'');
+        if (await pingJSON(`${base}/api/health`)) {
+          try { localStorage.setItem('apiBase', base); } catch {}
+          return base;
+        } else {
+          appendMessage('bot', 'That URL did not respond with JSON at /api/health. Please check the address.');
+        }
+      }
+    } catch {}
+    return ''; // fallback; will still show helpful error later
+  })();
+  return __apiBasePromise;
+}
+
 async function askChatGPT(message, calendar, options = {}) {
   // API key is now handled securely server-side
   const apiKey = await getOpenAIApiKey();
@@ -856,6 +862,9 @@ async function askChatGPT(message, calendar, options = {}) {
     appendMessage('bot', '❌ Server configuration error. Please check the deployment.');
     return;
   }
+  // Resolve endpoint
+  const apiBase = await resolveApiBase();
+  const endpoint = (apiBase ? `${apiBase}/api/openai-edge` : '/api/openai-edge');
   
   const today = new Date();
   const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
@@ -869,7 +878,7 @@ async function askChatGPT(message, calendar, options = {}) {
 
   try {
     // Call our secure serverless function instead of OpenAI directly
-    const data = await safeFetchJSON('/api/openai-edge', {
+    const data = await safeFetchJSON(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages })
@@ -1154,7 +1163,12 @@ async function askChatGPT(message, calendar, options = {}) {
 
     const msg = String(err && err.message || err);
     if (/non-JSON|Unexpected token/i.test(msg) || /404|Not Found/i.test(msg)) {
-      appendMessage('bot', '❌ The AI API endpoint is not returning JSON. If you are running locally, start the server and access the site through it, or deploy with the included vercel.json so /api is available.');
+      const base = await resolveApiBase();
+      if (!base) {
+        appendMessage('bot', '❌ The AI API endpoint is not reachable. If you are running locally, run "vercel dev" or provide a deployed base URL when prompted. You can also set it via "set api https://your-app.vercel.app".');
+      } else {
+        appendMessage('bot', `❌ The AI API at ${base} is not returning JSON. Check that /api/health works and OPENAI_API_KEY is set on the server.`);
+      }
       return;
     }
     if (msg.includes('401')) {
@@ -1535,9 +1549,18 @@ function parseTimeRange(timeStr) {
 
 async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase();
+  // Allow setting API base from chat: "set api https://..."
+  const setApi = lower.match(/^set\s+api\s+(https?:\/\/\S+)/i);
+  if (setApi) {
+    const base = setApi[1].replace(/\/$/, '');
+    try { localStorage.setItem('apiBase', base); } catch {}
+    // Reset cached base and confirm
+    __apiBasePromise = Promise.resolve(base);
+    appendMessage('bot', `${randomAck()} — API base set to ${base}`);
+    return;
+  }
   // Trigger schedule generation
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
- 
   if (genSchedule) {
     await startScheduleWizard(calendar);
     return;
@@ -1801,6 +1824,7 @@ function parseClubsInputToBlocks(input, knownClubs = []) {
         if (p === 'am' && hh === 12) hh = 0;
         return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
       }
+
       // already 24h like 18:00
       if (/^\d{1,2}:\d{2}$/.test(s)) return s;
       // fallback: integer hour only
