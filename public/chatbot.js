@@ -1405,7 +1405,7 @@ let pendingGeneralEvent = false; // Track if waiting for general event info
 // pendingDraft is already declared at top-level; ensure it exists
 if (!pendingDraft) { pendingDraft = { title: null }; }
 // Pending confirmation for full schedule deletion
-let pendingConfirmDeleteAll = false;
+// let pendingConfirmDeleteAll = false; // removed: no confirmations
 
 // Handle simple general event adds like: "add soccer" or "add soccer Mon 6pm-8pm"
 async function tryHandleAddGeneral(msg, calendar) {
@@ -1609,22 +1609,6 @@ function allocateStudyBlocks(pref = 'morning') {
 async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase().trim();
 
-  // Handle confirmation for delete-all
-  if (pendingConfirmDeleteAll) {
-    if (/^(y|yes|yeah|sure|ok|confirm|do it)$/i.test(lower)) {
-      pendingConfirmDeleteAll = false;
-      await clearAllEvents(calendar);
-      return;
-    }
-    if (/^(n|no|cancel|stop|nevermind|never mind)$/i.test(lower)) {
-      pendingConfirmDeleteAll = false;
-      appendMessage('bot', 'Deletion canceled.');
-      return;
-    }
-    appendMessage('bot', 'Please reply "yes" to confirm or "no" to cancel.');
-    return;
-  }
-
   // Intercept direct course add first
   try {
     const handledAdd = await tryHandleAddCourse(msg, calendar);
@@ -1650,22 +1634,20 @@ async function handleUserInput(msg, calendar) {
     if (handled) return;
   }
 
-  // Delete-all requests (confirmation step)
+  // Delete-all requests — immediate, no confirmations
   const wantsDeleteAll = /^(?:delete|remove)\s+(?:all(?:\s+events)?|everything)\b|^(?:clear|reset)\s+(?:calendar|schedule)\b|^(?:everything)$/i.test(lower);
   if (wantsDeleteAll) {
-    pendingConfirmDeleteAll = true;
-    appendMessage('bot', 'Are you sure you want to delete your entire schedule? Reply "yes" or "no".');
+    await clearAllEvents(calendar);
     return;
   }
 
-  // Quick commands to clear everything (legacy patterns)
+  // Legacy patterns for clearing — also immediate
   if (/(^|\b)(clear|reset)\s+(calendar|schedule)\b/i.test(msg) || /^(delete|remove)\s+all(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?\b/i.test(msg) || /^delete\s+everything/i.test(msg)) {
-    pendingConfirmDeleteAll = true;
-    appendMessage('bot', 'Are you sure you want to delete your entire schedule? Reply "yes" or "no".');
+    await clearAllEvents(calendar);
     return;
   }
 
-  // New: delete category in a time window, e.g., "delete all club activities from last week of September"
+  // New: delete category in a time window
   let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
   if (m) {
     const categoryPhrase = ((m[2] || '') + m[3]).trim();
