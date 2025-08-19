@@ -1283,101 +1283,54 @@ let pendingGroup = null;
 let pendingClashEvents = null;
 let pendingClashMsg = '';
 let pendingGeneralEvent = false; // Track if waiting for general event info
+// pendingDraft is already declared at top-level; ensure it exists
+if (!pendingDraft) { pendingDraft = { title: null }; }
+// Pending confirmation for full schedule deletion
+let pendingConfirmDeleteAll = false;
 
-// Helper: find course by fuzzy name (short_name or course contains)
-async function findCourseMatchesByName(query) {
-  const q = String(query || '').toLowerCase().trim();
-  const courses = await loadCourses();
-  const matches = courses.filter(c =>
-    c.short_name?.toLowerCase() === q ||
-    c.course?.toLowerCase() === q ||
-    c.short_name?.toLowerCase().includes(q) ||
-    c.course?.toLowerCase().includes(q)
-  );
-  return matches;
-}
+// Handle simple general event adds like: "add soccer" or "add soccer Mon 6pm-8pm"
+async function tryHandleAddGeneral(msg, calendar) {
+  const m = msg.match(/^(add|create|schedule)\s+(.+)$/i);
+  if (!m) return false;
+  const rest = m[2].trim();
+  // If looks like a course keyword, skip (course handler will take it)
+  if (/\b(course|class)\b/i.test(rest)) return false;
 
-function courseHasGroups(course) {
-  const isGrouped = (x) => x && !Array.isArray(x) && typeof x === 'object';
-  return isGrouped(course.lecture) || isGrouped(course.exercise);
-}
-
-function getCourseGroupKeys(course) {
-  const keys = new Set();
-  const collect = (obj) => { if (obj && typeof obj === 'object' && !Array.isArray(obj)) Object.keys(obj).forEach(k => keys.add(k)); };
-  collect(course.lecture); collect(course.exercise);
-  return Array.from(keys);
-}
-
-function summarizeGroupTimes(course, groupKey) {
-  const pick = (arr) => Array.isArray(arr) && arr.length ? arr[0] : null; // [teacher, day, start, end]
-  let parts = [];
-  if (course.lecture) {
-    const lec = Array.isArray(course.lecture) ? pick(course.lecture) : pick(course.lecture?.[groupKey]);
-    if (lec) parts.push(`${lec[1]} ${lec[2]}-${lec[3]} (lecture)`);
-  }
-  if (course.exercise) {
-    const ex = Array.isArray(course.exercise) ? pick(course.exercise) : pick(course.exercise?.[groupKey]);
-    if (ex) parts.push(`${ex[1]} ${ex[2]}-${ex[3]} (exercise)`);
-  }
-  return parts.join(', ');
-}
-
-async function tryHandleAddCourse(msg, calendar) {
-  const lower = msg.toLowerCase().trim();
-  // Detect intents like: "add X", "add course X", or just a bare course name preceded by add verbs
-  let m = lower.match(/^(?:add|enroll|insert)\s+(?:course\s+)?(.+)$/i);
-  let q = m ? m[1].trim() : '';
-  if (!q) {
-    // Also handle messages like just the course code/name if preceded by a keyword "add" is missing, skip.
-    // Return false so other handlers can proceed.
-    return false;
-  }
-
-  const matches = await findCourseMatchesByName(q);
-  if (!matches.length) return false; // let AI handle other cases
-  if (matches.length > 1) {
-    appendMessage('bot', `I found multiple courses: ${matches.map(c => c.short_name || c.course).join(', ')}. Please specify one.`);
-    return true;
-  }
-
-  const course = matches[0];
-  if (courseHasGroups(course)) {
-    // Try to infer group from the message
-    const groupKeys = getCourseGroupKeys(course);
-    let chosen = null;
-    // "group A" / "group B"
-    const gm = lower.match(/group\s*([a])/i);
-    if (gm) {
-      const gLetter = gm[1].toUpperCase();
-      chosen = groupKeys.find(k => k.toUpperCase().includes(gLetter));
-    }
-    // Or by weekday mention
-    if (!chosen) {
-      const weekDays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-      for (const wd of weekDays) {
-        if (lower.includes(wd)) {
-          chosen = groupKeys.find(k => summarizeGroupTimes(course, k).toLowerCase().includes(wd));
-          if (chosen) break;
-        }
-      }
-    }
-    if (!chosen) {
-      pendingCourse = course; pendingGroup = null;
-      const opts = groupKeys.map(k => `${k}: ${summarizeGroupTimes(course, k) || 'tbd'}`).join(' | ');
-      appendMessage('bot', `"${course.short_name || course.course}" has groups. Which do you prefer? ${opts}`);
+  // Extract weekday + time if present
+  const weekday = detectWeekday(rest);
+  const tr = parseTimeRangeFlexible(rest) || parseTimeRange(rest);
+  if (weekday && tr) {
+    const startTime = toHHMM(tr.startHour, tr.startMinute);
+    const endTime = toHHMM(tr.endHour, tr.endMinute);
+    const title = extractTitleFromMessage(rest) || rest.replace(/\b(on|at|from|to|\d.*)$/i,'').trim() || 'Activity';
+    const startDate = nextWeekdayDate(weekday, startTime);
+    const endDate = nextWeekdayDate(weekday, endTime);
+    try {
+      const saved = await window.authSystem.createEvent({
+        title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        allDay: false,
+        backgroundColor: '#6f42c1',
+        description: ''
+      });
+      rememberActivity('general', saved.title, new Date(saved.start_date), new Date(saved.end_date));
+      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+      calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+      appendMessage('bot', `${randomAck()} — added ${saved.title} on ${weekday} ${startTime}-${endTime}.`);
+      return true;
+    } catch (e) {
+      console.warn('Failed to persist general event, falling back to local add:', e);
+      calendar.addEvent({ title, start: startDate, end: endDate, backgroundColor: '#6f42c1' });
+      appendMessage('bot', `${randomAck()} — added ${title} on ${weekday} ${startTime}-${endTime}.`);
       return true;
     }
-    await addCourseToCalendar(course, chosen, calendar);
-    try { await window.authSystem.updateMemoryFromEvents(); } catch {}
-    appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (${chosen}).`);
-    return true;
-  } else {
-    await addCourseToCalendar(course, null, calendar);
-    try { await window.authSystem.updateMemoryFromEvents(); } catch {}
-    appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (lecture${course.exercise_credits>0 ? ' + exercise' : ''}).`);
-    return true;
   }
+  // No time yet: set pending and ask follow-up
+  pendingGeneralEvent = true;
+  pendingDraft.title = extractTitleFromMessage(rest) || rest;
+  appendMessage('bot', `What date and time for "${pendingDraft.title}"? For example: "Mon 6pm-8pm".`);
+  return true;
 }
 
 // Send button logic - robust binding
@@ -1534,50 +1487,62 @@ function allocateStudyBlocks(pref = 'morning') {
 
 // Improve delete command parsing to keep the 'all' qualifier
 async function handleUserInput(msg, calendar) {
-  // Check for schedule wizard first
-  const wiz = scheduleWizard;
-  if (wiz.active) {
+  const lower = msg.toLowerCase().trim();
+
+  // Handle confirmation for delete-all
+  if (pendingConfirmDeleteAll) {
+    if (/^(y|yes|yeah|sure|ok|confirm|do it)$/i.test(lower)) {
+      pendingConfirmDeleteAll = false;
+      await clearAllEvents(calendar);
+      return;
+    }
+    if (/^(n|no|cancel|stop|nevermind|never mind)$/i.test(lower)) {
+      pendingConfirmDeleteAll = false;
+      appendMessage('bot', 'Deletion canceled.');
+      return;
+    }
+    appendMessage('bot', 'Please reply "yes" to confirm or "no" to cancel.');
+    return;
+  }
+
+  // Intercept direct course add first
+  try {
+    const handledAdd = await tryHandleAddCourse(msg, calendar);
+    if (handledAdd) return;
+  } catch (e) { /* fall through to other handlers */ }
+
+  // Intercept simple general event add
+  const handledGeneral = await tryHandleAddGeneral(msg, calendar);
+  if (handledGeneral) return;
+
+  // Trigger schedule generation
+  const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
+  if (genSchedule) {
+    await startScheduleWizard(calendar);
+    return;
+  }
+  if (scheduleWizard.active) {
     const handled = await handleScheduleWizardAnswer(msg, calendar);
     if (handled) return;
   }
 
-  // Generic command parsing - detect and handle specific commands first
-  msg = msg.trim();
-  // Help command
-  if (/^help$/i.test(msg)) {
-    appendMessage('bot', `I can assist with course planning and scheduling! Try commands like:
-- "Add course code to calendar"
-- "Show my schedule"
-- "Delete event from calendar"
-- "Make me a study plan"`);
+  // Delete-all requests (confirmation step)
+  const wantsDeleteAll = /^(?:delete|remove)\s+(?:all(?:\s+events)?|everything)\b|^(?:clear|reset)\s+(?:calendar|schedule)\b|^(?:everything)$/i.test(lower);
+  if (wantsDeleteAll) {
+    pendingConfirmDeleteAll = true;
+    appendMessage('bot', 'Are you sure you want to delete your entire schedule? Reply "yes" or "no".');
     return;
   }
-  // List courses command
-  if (/^(list|show)\s+courses?/i.test(msg)) {
-    const courses = window.coursesList;
-    if (!Array.isArray(courses) || !courses.length) {
-      appendMessage('bot', 'No courses found. Please add courses first using "Add course code" command.');
-    } else {
-      const courseList = courses.map(c => `${c.course} (${c.short_name || 'No code'})`).join('\n');
-      appendMessage('bot', `Here are your courses:\n${courseList}`);
-    }
+
+  // Quick commands to clear everything (legacy patterns)
+  if (/(^|\b)(clear|reset)\s+(calendar|schedule)\b/i.test(msg) || /^(delete|remove)\s+all(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?\b/i.test(msg) || /^delete\s+everything/i.test(msg)) {
+    pendingConfirmDeleteAll = true;
+    appendMessage('bot', 'Are you sure you want to delete your entire schedule? Reply "yes" or "no".');
     return;
   }
-  // Show schedule command
-  if (/^(show|export)\s+schedule/i.test(msg)) {
-    appendMessage('bot', 'To which calendar do you want to export? Options: Google Calendar, Outlook, iCal');
-    return;
-  }
-  // Delete event command
-  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+(from|in|between|during)\s+(.+)/i);
-  if (m) {
-    const categoryPhrase = ((m[2] || '') + m[3]).trim();
-    const timePhrase = m[5].trim();
-    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
-    return;
-  }
-  // Also support commands without preposition: "delete clubs last week of September"
-  m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
+
+  // New: delete category in a time window, e.g., "delete all club activities from last week of September"
+  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
   if (m) {
     const categoryPhrase = ((m[2] || '') + m[3]).trim();
     const timePhrase = m[4].trim();
