@@ -1007,3 +1007,191 @@ async function applyWeekdayJobAdjustment(calendar, baseStart, requestedHoursPerW
     }
   }
 }
+
+// === Missing helpers and UI wiring ===
+
+// Basic time range parser: accepts "HH:MM-HH:MM", "H-H", and am/pm variants
+function parseTimeRange(text) {
+  if (!text) return null;
+  const s = String(text).trim().toLowerCase();
+  // Normalize spaces
+  const m = s.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-to]+\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (!m) return null;
+  let [ , sh, sm, samp, eh, em, eamp ] = m;
+  sm = sm || '00'; em = em || '00';
+  const to24 = (h, min, ap) => {
+    let hh = parseInt(h, 10);
+    let mm = parseInt(min, 10) || 0;
+    if (ap) {
+      const apu = ap.toLowerCase();
+      if (apu === 'pm' && hh < 12) hh += 12;
+      if (apu === 'am' && hh === 12) hh = 0;
+    }
+    return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  };
+  // If only one am/pm provided, apply smart default to the other
+  if (samp && !eamp) eamp = samp; // assume same period if end lacks
+  const start = to24(sh, sm, samp);
+  const end = to24(eh, em, eamp);
+  return { start, end };
+}
+
+function eventsOverlap(aStart, aEnd, bStart, bEnd) {
+  const s1 = new Date(aStart).getTime();
+  const e1 = new Date(aEnd).getTime();
+  const s2 = new Date(bStart).getTime();
+  const e2 = new Date(bEnd).getTime();
+  return s1 < e2 && s2 < e1;
+}
+
+function isSlotFree(calendar, start, end) {
+  try {
+    const evs = calendar.getEvents();
+    for (const ev of evs) {
+      const evStart = new Date(ev.start);
+      const evEnd = new Date(ev.end || ev.start);
+      if (eventsOverlap(start, end, evStart, evEnd)) return false;
+    }
+    return true;
+  } catch (_) { return true; }
+}
+
+// Try to place a block starting near startHH for a given weekday; slide by stepMinutes until latestEndHH
+function tryPlaceBlock(calendar, baseStart, weekdayName, startHH, hours, weekOffset = 0, stepMinutes = 15, latestEndHH = '22:00') {
+  const latestEnd = latestEndHH || '22:00';
+  let cur = dateForWeekdayFrom(baseStart, weekdayName, startHH, weekOffset);
+  const latest = dateForWeekdayFrom(baseStart, weekdayName, latestEnd, weekOffset);
+  const durMs = (hours || 1) * 3600000;
+  while (cur.getTime() + durMs <= latest.getTime()) {
+    const end = new Date(cur.getTime() + durMs);
+    if (isSlotFree(calendar, cur, end)) return { start: new Date(cur), end };
+    cur = new Date(cur.getTime() + stepMinutes * 60000);
+  }
+  return null;
+}
+
+function allocateStudyBlocks(pref = 'morning') {
+  // Return [day, startHH, endHH] templates
+  const sets = {
+    morning: [ ['Monday','09:00','11:00'], ['Tuesday','09:00','11:00'], ['Thursday','09:00','11:00'], ['Saturday','10:00','12:00'] ],
+    afternoon: [ ['Monday','14:00','16:00'], ['Wednesday','14:00','16:00'], ['Friday','14:00','16:00'], ['Sunday','13:00','15:00'] ],
+    evening: [ ['Monday','19:00','21:00'], ['Wednesday','19:00','21:00'], ['Thursday','19:00','21:00'], ['Sunday','18:00','20:00'] ]
+  };
+  return sets[pref] || sets.morning;
+}
+
+// Parse clubs text like: "Soccer Tue 18:00-20:00, Volleyball Sat 10am-12pm" or "monday from 6pm to 8pm - Basketball"
+function parseClubsInputToBlocks(text, knownClubs = []) {
+  const out = [];
+  if (!text) return out;
+  const parts = String(text).split(/\s*[,;\n]+\s*/);
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  for (let raw of parts) {
+    if (!raw) continue;
+    const day = detectWeekday(raw);
+    const tr = parseTimeRangeFlexible(raw) || parseTimeRange(raw);
+    if (!day || !tr) continue;
+    let name = '';
+    // Try to find a known club name in the fragment
+    const lower = raw.toLowerCase();
+    for (const k of knownClubs) {
+      if (lower.includes(String(k).toLowerCase())) { name = k; break; }
+    }
+    // If not found, extract first capitalized word(s) before day
+    if (!name) {
+      const beforeDay = raw.split(new RegExp(day, 'i'))[0] || raw;
+      const m = beforeDay.match(/([A-Z][A-Za-z0-9&\- ]{2,})/);
+      name = (m && m[1].trim()) || 'Club Activity';
+    }
+    out.push({ name, day, start: tr.start, end: tr.end });
+  }
+  return out;
+}
+
+async function clearAllEvents(calendar) {
+  try {
+    const evs = calendar.getEvents();
+    for (const ev of evs) {
+      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
+      ev.remove();
+    }
+    appendMessage('bot', randomAck('cleared all events'));
+  } catch (e) {
+    appendMessage('bot', 'Sorry — failed to clear events.');
+  }
+}
+
+// Minimal safe fetch wrapper for OpenAI proxy
+async function safeFetchJSON(url, payload) {
+  try {
+    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error('Non-JSON response');
+    return await resp.json();
+  } catch (e) { return null; }
+}
+
+async function askChatGPT(messages) {
+  const data = await safeFetchJSON('/api/openai-edge', { messages });
+  if (!data || !data.choices || !data.choices.length) return null;
+  return data.choices[0].message?.content || null;
+}
+
+// Handle user input at the top level
+async function handleUserInput(msg, calendar) {
+  const text = String(msg || '').trim();
+  if (!text) return;
+
+  // If wizard is active, route to it
+  if (scheduleWizard.active) {
+    const handled = await handleScheduleWizardAnswer(text, calendar);
+    if (!handled) appendMessage('bot', "Sorry, I didn't catch that. Could you rephrase?");
+    return;
+  }
+
+  // Commands
+  if (/^clear\s+all\s+events$/i.test(text)) { await clearAllEvents(calendar); return; }
+  if (/^(start|generate|make).*(plan|schedule)/i.test(text) || /schedule\s+wizard/i.test(text)) {
+    appendMessage('bot', 'Awesome — I\'ll help you plan. I\'ll ask a few quick questions.');
+    await startScheduleWizard(calendar);
+    return;
+  }
+
+  // Fallback to AI small talk/help
+  showLoading();
+  const reply = await askChatGPT([
+    { role: 'system', content: 'You are a friendly student scheduling assistant. Keep answers short and helpful.' },
+    { role: 'user', content: text }
+  ]);
+  hideLoading();
+  if (reply) appendMessage('bot', reply);
+  else appendMessage('bot', 'Hmm, I could not reach the AI right now. Try again or say "generate schedule".');
+}
+
+// Attach UI listeners
+(function setupChatUI() {
+  if (!chatInput || !sendBtn || !chatMessages) return;
+  // Greet
+  appendMessage('bot', 'Hi! I can build your two-week schedule. Type "generate schedule" to start, or ask me anything.');
+
+  const getCal = () => window.calendar;
+  sendBtn.addEventListener('click', async () => {
+    const val = chatInput.value.trim();
+    if (!val) return;
+    appendMessage('user', val);
+    chatInput.value = '';
+    await handleUserInput(val, getCal());
+  });
+  chatInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const val = chatInput.value.trim();
+      if (!val) return;
+      appendMessage('user', val);
+      chatInput.value = '';
+      await handleUserInput(val, getCal());
+    }
+  });
+
+  // Preload memory (non-blocking)
+  try { loadUserMemory(); } catch {}
+})();
