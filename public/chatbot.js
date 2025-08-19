@@ -798,34 +798,20 @@ async function safeFetchJSON(input, init) {
   return res.json();
 }
 
-// Simple JSON ping with timeout
-async function pingJSON(url, timeoutMs = 2500) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, { signal: ctrl.signal });
-    const ct = r.headers.get('content-type') || '';
-    return r.ok && ct.includes('application/json');
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 // Resolve API base URL for /api calls. Supports:
 // 1) Same-origin (when served via a server)
 // 2) Global window.API_BASE
 // 3) localStorage apiBase
-// 4) Prompt the user once to provide a deployed base URL
 let __apiBasePromise;
 async function resolveApiBase() {
   if (__apiBasePromise) return __apiBasePromise;
   __apiBasePromise = (async () => {
     // 1) Same-origin health check (works in vercel dev/deploy)
-    if (location.protocol.startsWith('http')) {
-      if (await pingJSON('/api/health')) return '';
-    }
+    try {
+      if (location.protocol.startsWith('http')) {
+        if (await pingJSON('/api/health')) return '';
+      }
+    } catch {}
     // 2) window.API_BASE (set in index.html or elsewhere)
     const globalBase = (typeof window !== 'undefined' && window.API_BASE) ? String(window.API_BASE).replace(/\/$/,'') : '';
     if (globalBase) {
@@ -833,24 +819,12 @@ async function resolveApiBase() {
     }
     // 3) localStorage
     try {
-      const stored = localStorage.getItem('apiBase') || '';
-      if (stored && await pingJSON(`${stored.replace(/\/$/,'')}/api/health`)) return stored.replace(/\/$/,'');
+      const storedRaw = localStorage.getItem('apiBase') || '';
+      const stored = storedRaw.replace(/\/$/,'')
+      if (stored && await pingJSON(`${stored}/api/health`)) return stored;
     } catch {}
-    // 4) Ask the user once
-    try {
-      const hint = 'Enter your deployed API base URL (e.g., https://your-app.vercel.app). I will save it for next time.';
-      const provided = window.prompt(hint, '');
-      if (provided) {
-        const base = provided.trim().replace(/\/$/,'');
-        if (await pingJSON(`${base}/api/health`)) {
-          try { localStorage.setItem('apiBase', base); } catch {}
-          return base;
-        } else {
-          appendMessage('bot', 'That URL did not respond with JSON at /api/health. Please check the address.');
-        }
-      }
-    } catch {}
-    return ''; // fallback; will still show helpful error later
+    // No prompt fallback; just return empty to stay non-blocking
+    return '';
   })();
   return __apiBasePromise;
 }
@@ -862,9 +836,6 @@ async function askChatGPT(message, calendar, options = {}) {
     appendMessage('bot', '❌ Server configuration error. Please check the deployment.');
     return;
   }
-  // Resolve endpoint
-  const apiBase = await resolveApiBase();
-  const endpoint = (apiBase ? `${apiBase}/api/openai-edge` : '/api/openai-edge');
   
   const today = new Date();
   const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
@@ -878,7 +849,7 @@ async function askChatGPT(message, calendar, options = {}) {
 
   try {
     // Call our secure serverless function instead of OpenAI directly
-    const data = await safeFetchJSON(endpoint, {
+    const data = await safeFetchJSON('/api/openai-edge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages })
@@ -1165,7 +1136,7 @@ async function askChatGPT(message, calendar, options = {}) {
     if (/non-JSON|Unexpected token/i.test(msg) || /404|Not Found/i.test(msg)) {
       const base = await resolveApiBase();
       if (!base) {
-        appendMessage('bot', '❌ The AI API endpoint is not reachable. If you are running locally, run "vercel dev" or provide a deployed base URL when prompted. You can also set it via "set api https://your-app.vercel.app".');
+        appendMessage('bot', '❌ The AI API endpoint is not reachable. If you are running locally, run "vercel dev" or deploy with the included vercel.json so /api is available. You can also set it via "set api https://your-app.vercel.app".');
       } else {
         appendMessage('bot', `❌ The AI API at ${base} is not returning JSON. Check that /api/health works and OPENAI_API_KEY is set on the server.`);
       }
@@ -1549,16 +1520,6 @@ function parseTimeRange(timeStr) {
 
 async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase();
-  // Allow setting API base from chat: "set api https://..."
-  const setApi = lower.match(/^set\s+api\s+(https?:\/\/\S+)/i);
-  if (setApi) {
-    const base = setApi[1].replace(/\/$/, '');
-    try { localStorage.setItem('apiBase', base); } catch {}
-    // Reset cached base and confirm
-    __apiBasePromise = Promise.resolve(base);
-    appendMessage('bot', `${randomAck()} — API base set to ${base}`);
-    return;
-  }
   // Trigger schedule generation
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
   if (genSchedule) {
@@ -1575,6 +1536,7 @@ async function handleUserInput(msg, calendar) {
     return;
   }
   // New: delete category in a time window, e.g., "delete all club activities from last week of September"
+
   let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+(from|in|between|during)\s+(.+)/i);
   if (m) {
     const categoryPhrase = m[3].trim();
@@ -1824,7 +1786,6 @@ function parseClubsInputToBlocks(input, knownClubs = []) {
         if (p === 'am' && hh === 12) hh = 0;
         return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
       }
-
       // already 24h like 18:00
       if (/^\d{1,2}:\d{2}$/.test(s)) return s;
       // fallback: integer hour only
