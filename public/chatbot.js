@@ -1158,55 +1158,235 @@ async function loadCourses() {
   return await res.json();
 }
 
-// Find a course by matching name or short name within free text
-function findCourseByText(text, courses) {
-  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-  const t = norm(text);
-  let best = null;
-  for (const c of (courses || [])) {
-    const names = [c.course, c.short_name].filter(Boolean).map(norm);
-    for (const n of names) {
-      if (!n) continue;
-      if (t.includes(n) || n.includes(t)) { best = c; break; }
-      // token overlap
-      const tn = new Set(t.split(' '));
-      const nn = new Set(n.split(' '));
-      const overlap = [...nn].filter(x => tn.has(x));
-      if (overlap.length >= Math.min(2, nn.size)) { best = c; break; }
+// Utility to add course schedule to calendar
+async function addCourseToCalendar(course, group, calendar) {
+  // helper to persist then add
+  async function saveAndAdd({ title, startDate, endDate, description, color }) {
+    try {
+      const saved = await window.authSystem.createEvent({
+        title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        allDay: false,
+        backgroundColor: color,
+        description: description || ''
+      });
+      rememberActivity('course', title, startDate, endDate)
+      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
+      calendar.addEvent({
+        id: saved.id,
+        title: saved.title,
+        start: saved.start_date,
+        end: saved.end_date,
+        allDay: saved.all_day,
+        backgroundColor: saved.color,
+        extendedProps: { description: saved.description }
+      });
+    } catch (e) {
+      console.error('Failed to persist course event, adding locally:', e);
+      calendar.addEvent({
+        title,
+        start: startDate,
+        end: endDate,
+        description,
+        backgroundColor: color,
+        borderColor: color,
+        textColor: '#ffffff'
+      });
     }
-    if (best) break;
   }
-  return best;
+
+  // Handle lectures
+  if (course.lecture) {
+    if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
+      // Grouped lectures
+      if (course.lecture[group]) {
+        for (const [lecturer, day, start, end] of course.lecture[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
+            title: `${course.short_name} Lecture`,
+            startDate,
+            endDate,
+            description: `Lecturer: ${lecturer}`,
+            color: '#3788d8'
+          });
+        }
+      }
+    } else {
+      // Single array
+      for (const [lecturer, day, start, end] of course.lecture) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
+          title: `${course.short_name} Lecture`,
+          startDate,
+          endDate,
+          description: `Lecturer: ${lecturer}`,
+          color: '#3788d8'
+        });
+      }
+    }
+  }
+  // Handle exercises
+  if (course.exercise) {
+    if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
+      // Grouped exercises
+      if (course.exercise[group]) {
+        for (const [lecturer, day, start, end] of course.exercise[group]) {
+          const startDate = nextWeekdayDate(day, start);
+          const endDate = nextWeekdayDate(day, end);
+          await saveAndAdd({
+            title: `${course.short_name} Exercise`,
+            startDate,
+            endDate,
+            description: `Lecturer: ${lecturer}`,
+            color: '#28a745'
+          });
+        }
+      }
+    } else {
+      // Single array
+      for (const [lecturer, day, start, end] of course.exercise) {
+        const startDate = nextWeekdayDate(day, start);
+        const endDate = nextWeekdayDate(day, end);
+        await saveAndAdd({
+          title: `${course.short_name} Exercise`,
+          startDate,
+          endDate,
+          description: `Lecturer: ${lecturer}`,
+          color: '#28a745'
+        });
+      }
+    }
+  }
 }
 
-// Handle adding a course (both lecture and exercise by default)
-async function handleAddCourseIntent(msg, calendar) {
-  const courses = await loadCourses();
-  const course = findCourseByText(msg, courses);
-  if (!course) return false; // not a course add intent
+// Utility to get next date for a weekday from today
+function nextWeekdayDate(weekday, time) {
+  const days = {
+    'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0
+  };
+  const today = new Date();
+  let dayNum = days[weekday];
+  let result = new Date(today);
+  result.setHours(...time.split(':').map(Number), 0, 0);
+  let diff = (dayNum - today.getDay() + 7) % 7;
+  if (diff === 0 && result < today) diff = 7;
+  result.setDate(today.getDate() + diff);
+  return result;
+}
 
-  // If grouped (lecture or exercise has groups), ask for group
-  const hasGroupedLect = course.lecture && typeof course.lecture === 'object' && !Array.isArray(course.lecture);
-  const hasGroupedEx = course.exercise && typeof course.exercise === 'object' && !Array.isArray(course.exercise);
-  if (hasGroupedLect || hasGroupedEx) {
-    pendingCourse = course;
-    const groups = new Set([
-      ...(hasGroupedLect ? Object.keys(course.lecture) : []),
-      ...(hasGroupedEx ? Object.keys(course.exercise) : [])
-    ]);
-    appendMessage('bot', `Which group are you in for ${course.short_name || course.course}? ${[...groups].join(' or ')}?`);
+// Intercept user input for course selection
+let pendingCourse = null;
+let pendingGroup = null;
+let pendingClashEvents = null;
+let pendingClashMsg = '';
+let pendingGeneralEvent = false; // Track if waiting for general event info
+
+// Helper: find course by fuzzy name (short_name or course contains)
+async function findCourseMatchesByName(query) {
+  const q = String(query || '').toLowerCase().trim();
+  const courses = await loadCourses();
+  const matches = courses.filter(c =>
+    c.short_name?.toLowerCase() === q ||
+    c.course?.toLowerCase() === q ||
+    c.short_name?.toLowerCase().includes(q) ||
+    c.course?.toLowerCase().includes(q)
+  );
+  return matches;
+}
+
+function courseHasGroups(course) {
+  const isGrouped = (x) => x && !Array.isArray(x) && typeof x === 'object';
+  return isGrouped(course.lecture) || isGrouped(course.exercise);
+}
+
+function getCourseGroupKeys(course) {
+  const keys = new Set();
+  const collect = (obj) => { if (obj && typeof obj === 'object' && !Array.isArray(obj)) Object.keys(obj).forEach(k => keys.add(k)); };
+  collect(course.lecture); collect(course.exercise);
+  return Array.from(keys);
+}
+
+function summarizeGroupTimes(course, groupKey) {
+  const pick = (arr) => Array.isArray(arr) && arr.length ? arr[0] : null; // [teacher, day, start, end]
+  let parts = [];
+  if (course.lecture) {
+    const lec = Array.isArray(course.lecture) ? pick(course.lecture) : pick(course.lecture?.[groupKey]);
+    if (lec) parts.push(`${lec[1]} ${lec[2]}-${lec[3]} (lecture)`);
+  }
+  if (course.exercise) {
+    const ex = Array.isArray(course.exercise) ? pick(course.exercise) : pick(course.exercise?.[groupKey]);
+    if (ex) parts.push(`${ex[1]} ${ex[2]}-${ex[3]} (exercise)`);
+  }
+  return parts.join(', ');
+}
+
+async function tryHandleAddCourse(msg, calendar) {
+  const lower = msg.toLowerCase().trim();
+  // Detect intents like: "add X", "add course X", or just a bare course name preceded by add verbs
+  let m = lower.match(/^(?:add|enroll|insert)\s+(?:course\s+)?(.+)$/i);
+  let q = m ? m[1].trim() : '';
+  if (!q) {
+    // Also handle messages like just the course code/name if preceded by a keyword "add" is missing, skip.
+    // Return false so other handlers can proceed.
+    return false;
+  }
+
+  const matches = await findCourseMatchesByName(q);
+  if (!matches.length) return false; // let AI handle other cases
+  if (matches.length > 1) {
+    appendMessage('bot', `I found multiple courses: ${matches.map(c => c.short_name || c.course).join(', ')}. Please specify one.`);
     return true;
   }
 
-  // Non-grouped: add both lecture and exercise if present
-  await addCourseToCalendar(course, null, calendar);
-  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (lecture${course.exercise && course.exercise.length ? ' + exercise' : ''}).`);
-  return true;
+  const course = matches[0];
+  if (courseHasGroups(course)) {
+    // Try to infer group from the message
+    const groupKeys = getCourseGroupKeys(course);
+    let chosen = null;
+    // "group A" / "group B"
+    const gm = lower.match(/group\s*([a-z])/i);
+    if (gm) {
+      const gLetter = gm[1].toUpperCase();
+      chosen = groupKeys.find(k => k.toUpperCase().includes(gLetter));
+    }
+    // Or by weekday mention
+    if (!chosen) {
+      const weekDays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+      for (const wd of weekDays) {
+        if (lower.includes(wd)) {
+          chosen = groupKeys.find(k => summarizeGroupTimes(course, k).toLowerCase().includes(wd));
+          if (chosen) break;
+        }
+      }
+    }
+    if (!chosen) {
+      pendingCourse = course; pendingGroup = null;
+      const opts = groupKeys.map(k => `${k}: ${summarizeGroupTimes(course, k) || 'tbd'}`).join(' | ');
+      appendMessage('bot', `"${course.short_name || course.course}" has groups. Which do you prefer? ${opts}`);
+      return true;
+    }
+    await addCourseToCalendar(course, chosen, calendar);
+    try { await window.authSystem.updateMemoryFromEvents(); } catch {}
+    appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (${chosen}).`);
+    return true;
+  } else {
+    await addCourseToCalendar(course, null, calendar);
+    try { await window.authSystem.updateMemoryFromEvents(); } catch {}
+    appendMessage('bot', `${randomAck()} — added ${course.short_name || course.course} (lecture${course.exercise_credits>0 ? ' + exercise' : ''}).`);
+    return true;
+  }
 }
 
 async function handleUserInput(msg, calendar) {
   const lower = msg.toLowerCase();
+  // Intercept direct course add first
+  try {
+    const handledAdd = await tryHandleAddCourse(msg, calendar);
+    if (handledAdd) return;
+  } catch (e) { /* fall through to other handlers */ }
   // Trigger schedule generation
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
   if (genSchedule) {
@@ -1215,30 +1395,6 @@ async function handleUserInput(msg, calendar) {
   }
   if (scheduleWizard.active) {
     const handled = await handleScheduleWizardAnswer(msg, calendar);
-    if (handled) return;
-  }
-  // Course add follow-up like "lecture and exercise"
-  if (pendingCourse && /(lecture\s*(and|\+)?\s*exercise|both)/i.test(lower)) {
-    // If grouped, still need a group selection
-    const hasGroupedLect = pendingCourse.lecture && typeof pendingCourse.lecture === 'object' && !Array.isArray(pendingCourse.lecture);
-    const hasGroupedEx = pendingCourse.exercise && typeof pendingCourse.exercise === 'object' && !Array.isArray(pendingCourse.exercise);
-    if (hasGroupedLect || hasGroupedEx) {
-      const groups = new Set([
-        ...(hasGroupedLect ? Object.keys(pendingCourse.lecture) : []),
-        ...(hasGroupedEx ? Object.keys(pendingCourse.exercise) : [])
-      ]);
-      appendMessage('bot', `Got it — please specify your group for ${pendingCourse.short_name || pendingCourse.course}: ${[...groups].join(' or ')}.`);
-      return;
-    }
-    await addCourseToCalendar(pendingCourse, null, calendar);
-    try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-    appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name || pendingCourse.course}.`);
-    pendingCourse = null; pendingGroup = null;
-    return;
-  }
-  // Direct intent: add <course>
-  if (/(^|\b)(add|enroll|register)\b/i.test(lower)) {
-    const handled = await handleAddCourseIntent(msg, calendar);
     if (handled) return;
   }
   // Quick commands to clear everything
@@ -1335,28 +1491,17 @@ async function handleUserInput(msg, calendar) {
   // Check if waiting for group
   if (pendingCourse && !pendingGroup) {
     let group = null;
-    const gm = lower.match(/group\s*([ab])/i) || lower.match(/\b([ab])\b/i);
-    if (gm) { group = `Group ${gm[1].toUpperCase()}`; }
-    // legacy hints
-    if (!group) {
-      if (/\bmon(day)?\b/i.test(msg)) group = 'Group B';
-      if (/\bthu(rs|rsday)?\b/i.test(msg)) group = 'Group A';
-    }
+    if (/A|Monday/i.test(msg)) group = 'Group A';
+    if (/B|Thursday/i.test(msg)) group = 'Group B';
     if (group) {
       hideLoading();
-      await addCourseToCalendar(pendingCourse, group, calendar);
-      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name || pendingCourse.course} for ${group}.`);
+      addCourseToCalendar(pendingCourse, group, calendar);
+      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name} for ${group}.`);
       pendingCourse = null;
       pendingGroup = null;
     } else {
       hideLoading();
-      const hasGroupedLect = pendingCourse.lecture && typeof pendingCourse.lecture === 'object' && !Array.isArray(pendingCourse.lecture);
-      const hasGroupedEx = pendingCourse.exercise && typeof pendingCourse.exercise === 'object' && !Array.isArray(pendingCourse.exercise);
-      const groups = new Set([
-        ...(hasGroupedLect ? Object.keys(pendingCourse.lecture) : []),
-        ...(hasGroupedEx ? Object.keys(pendingCourse.exercise) : [])
-      ]);
-      appendMessage('bot', `Which group works for you: ${[...groups].join(' or ')}?`);
+      appendMessage('bot', 'Which group works for you: A (Monday) or B (Thursday)?');
     }
     return;
   }
@@ -1646,7 +1791,7 @@ function parseDateFromMonthDay(text, defaultYear) {
   // Numeric like 9/21[/2025]
   m = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
   if (m) {
-    const mon = parseInt(m[1],10)-1; const day = parseInt(m[2],10); let yr = m[3] ? parseInt(m[3],10) : defaultYear; if (yr < 100) yr += 2000;
+    const mon = parseInt(m[1],10)-1; const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : defaultYear; if (yr < 100) yr += 2000;
     return new Date(yr, mon, day);
   }
   // ISO yyyy-mm-dd
