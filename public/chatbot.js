@@ -26,70 +26,77 @@ const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 
-// Add helpers and send handler
+// Small helper acks used in various replies
+function randomAck(suffix) {
+  const arr = ['Done', 'All set', 'Success', 'Okay', 'Got it'];
+  const pick = arr[Math.floor(Math.random() * arr.length)];
+  return suffix ? `${pick}, ${suffix}` : pick;
+}
+
+// Ping a JSON endpoint (used by resolveApiBase)
 async function pingJSON(url) {
   try {
-    const res = await fetch(url, { method: 'GET' });
-    return res.ok;
-  } catch { return false; }
+    const r = await fetch(url, { method: 'GET', cache: 'no-store' });
+    if (!r.ok) return false;
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return true;
+    // health may not be JSON; treat any 2xx as ok
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function randomAck(extra) {
-  const arr = ['Done', 'All set', 'Great', 'Okay', 'Got it', 'Success'];
-  const pick = arr[Math.floor(Math.random() * arr.length)];
-  return extra ? `${pick}, ${extra}` : pick;
-}
-
+// Immediate destructive clear of all events for current user
 async function clearAllEvents(calendar) {
-  try { await window.authSystem?.deleteAllEvents?.(); } catch {}
   try {
-    if (calendar && typeof calendar.getEvents === 'function') {
-      calendar.getEvents().forEach(ev => ev.remove());
-    }
-  } catch {}
-  appendMessage('bot', 'All events deleted.');
+    await window.authSystem.deleteAllEvents();
+    (calendar.getEvents() || []).forEach(ev => ev.remove());
+    appendMessage('bot', 'All events have been deleted.');
+  } catch (e) {
+    console.error('clearAllEvents failed:', e);
+    appendMessage('bot', '❌ Failed to delete events.');
+  }
 }
 
+// Route a user message to handlers
 async function handleSend() {
-  const text = (chatInput?.value || '').trim();
-  if (!text) return;
-  appendMessage('user', text);
-  chatInput.value = '';
-  const calendar = window.calendar;
+  const msg = (chatInput?.value || '').trim();
+  if (!msg) return;
+  appendMessage('user', msg);
+  if (chatInput) chatInput.value = '';
+  showLoading();
 
-  // Route active wizard answers
-  if (typeof scheduleWizard !== 'undefined' && scheduleWizard?.active) {
-    const handled = await handleScheduleWizardAnswer(text, calendar);
-    if (handled) return;
+  // 1) Wizard flow
+  if (scheduleWizard?.active) {
+    const handled = await handleScheduleWizardAnswer(msg, window.calendar);
+    hideLoading();
+    return handled;
   }
 
-  const lower = text.toLowerCase();
-
-  // Immediate delete-all/reset commands
-  if (/(^|\b)(delete all|reset calendar|clear all)(\b|$)/i.test(lower)) {
-    await clearAllEvents(calendar);
-    return;
+  // 2) Destructive shortcuts
+  if (/^(?:delete|clear|reset)\s+(?:all|calendar|everything)\b/i.test(msg)) {
+    await clearAllEvents(window.calendar);
+    hideLoading();
+    return true;
   }
 
-  // Direct date-range daily events
+  // 3) Direct date-span daily events (no confirmations)
   try {
-    const handledRange = await tryHandleRangeEvents(text, calendar);
-    if (handledRange) return;
+    const ok = await tryHandleRangeEvents(msg, window.calendar);
+    if (ok) { hideLoading(); return true; }
   } catch (e) {
     console.warn('Range handler failed:', e);
   }
 
-  showLoading();
-  await askChatGPT(text, calendar);
+  // 4) Fallback to AI
+  await askChatGPT(msg, window.calendar);
 }
 
-// Wire up button and Enter key
-if (sendBtn) sendBtn.addEventListener('click', () => handleSend());
+// Wire UI
+if (sendBtn) sendBtn.addEventListener('click', () => { handleSend(); });
 if (chatInput) chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    handleSend();
-  }
+  if (e.key === 'Enter') { e.preventDefault(); handleSend(); }
 });
 
 function appendMessage(sender, text) {
@@ -297,7 +304,7 @@ async function tryHandleRangeEvents(msg, calendar) {
   let tr = parseTimeRangeFlexible(msg);
   if (!tr) {
     // Try pattern "from <date> to <date> from <time> to <time>"
-    const mt = msg.match(/from\s+[^\n]+?\s+to\s+[^\n]+?\s+(?:from\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+    const mt = msg.match(/from\s+[^\n]+?\s+to\s+[^\n]+?\s+(?:from\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:to|- )\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
     if (mt) tr = parseTimeRange(`${mt[1]}-${mt[2]}`);
   }
   if (!tr) return false;
@@ -334,6 +341,60 @@ async function tryHandleRangeEvents(msg, calendar) {
   if (count > 0) appendMessage('bot', `${randomAck()} — added ${count} day(s) of ${titleRaw}.`);
   else appendMessage('bot', 'Couldn\'t place those events — please check the dates/times.');
   return true;
+}
+
+// Utility helpers used by the schedule wizard
+function isSlotFree(calendar, start, end) {
+  try {
+    const evs = calendar.getEvents();
+    for (const ev of evs) {
+      const s = new Date(ev.start);
+      const e = new Date(ev.end || ev.start);
+      if (e > start && s < end) return false;
+    }
+  } catch {}
+  return true;
+}
+
+function tryPlaceBlock(calendar, base, weekdayName, startHH, hours, weekOffset = 0, stepMin = 15, latestHH = '21:30') {
+  let s = dateForWeekdayFrom(base, weekdayName, startHH, weekOffset);
+  let e = new Date(s.getTime() + (Math.max(1, Number(hours)||1) * 60 * 60000));
+  const [lh, lm] = (latestHH||'21:30').split(':').map(x=>parseInt(x,10));
+  const latest = new Date(s); latest.setHours(lh||21, lm||30, 0, 0);
+  while (e <= latest) {
+    if (isSlotFree(calendar, s, e)) return { start: new Date(s), end: new Date(e) };
+    s = new Date(s.getTime() + stepMin * 60000);
+    e = new Date(s.getTime() + (Math.max(1, Number(hours)||1) * 60 * 60000));
+  }
+  return null;
+}
+
+function allocateStudyBlocks(pref = 'afternoon') {
+  switch (pref) {
+    case 'morning': return [['Monday','09:00','11:00'], ['Tuesday','09:00','11:00'], ['Thursday','09:00','11:00']];
+    case 'evening': return [['Monday','19:00','21:00'], ['Wednesday','19:00','21:00'], ['Friday','19:00','21:00']];
+    default: return [['Monday','13:00','15:00'], ['Wednesday','13:00','15:00'], ['Friday','13:00','15:00']];
+  }
+}
+
+function parseClubsInputToBlocks(text, known = []) {
+  const res = [];
+  const items = String(text||'').split(/;|\n|,(?=\s*[A-Z])/).map(s=>s.trim()).filter(Boolean);
+  const dayRx = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i;
+  const timeRx = /(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i;
+  for (const item of items) {
+    const dM = item.match(dayRx);
+    const tM = item.match(timeRx);
+    const name = item.replace(dayRx,'').replace(timeRx,'').trim() || (known[0] || 'Club Activity');
+    if (dM && tM) {
+      const day = dM[1].charAt(0).toUpperCase() + dM[1].slice(1).toLowerCase();
+      const tr = parseTimeRange(`${tM[1]}-${tM[2]}`) || { startHour: 17, startMinute: 0, endHour: 19, endMinute: 0 };
+      const s = `${String(tr.startHour).padStart(2,'0')}:${String(tr.startMinute).padStart(2,'0')}`;
+      const e = `${String(tr.endHour).padStart(2,'0')}:${String(tr.endMinute).padStart(2,'0')}`;
+      res.push({ name, day, start: s, end: e });
+    }
+  }
+  return res;
 }
 
 // ---------- Schedule Generation Wizard ----------
@@ -1036,74 +1097,109 @@ async function executeSqlStatements(sqlText, calendar) {
   if (!sql) return { inserted: 0, deleted: 0, selected: 0 };
   const stmts = sql.split(/;\s*(?=(?:[^']*'[^']*')*[^']*$)/).map(s => s.trim()).filter(Boolean);
   let inserted = 0, deleted = 0; // selected count is optional
-  for (const s of stmts) {
-    if (/^insert\s+into\s+events\s*\(/i.test(s)) {
-      // Parse columns and values
-      const m = s.match(/^insert\s+into\s+events\s*\(([^)]+)\)\s*values\s*\((.+)\)\s*$/i);
-      if (!m) continue;
-      const columns = m[1].split(',').map(x => x.trim().replace(/"/g, ''));
-      const values = tokenizeSqlValues(m[2]);
-      if (columns.length !== values.length) continue;
-      const obj = {};
-      for (let i=0;i<columns.length;i++) {
-        obj[columns[i]] = values[i];
+
+  function normalizeTableSegment(seg) {
+    // Accept events, "events", public.events, "public"."events"
+    return /(^|\.)\s*"?events"?\s*$/i.test(seg.trim()) || /^"?public"?\s*\.\s*"?events"?$/i.test(seg.trim());
+  }
+
+  function splitValueTuples(valuesBlock) {
+    // Input like: (..),(..),(..)
+    const res = [];
+    let depth = 0, inQuote = false, startIdx = -1;
+    for (let i = 0; i < valuesBlock.length; i++) {
+      const ch = valuesBlock[i];
+      if (ch === "'") {
+        if (inQuote && valuesBlock[i+1] === "'") { i++; continue; }
+        inQuote = !inQuote; continue;
       }
-      const title = stripSqlString(obj.title || obj.TITLE);
-      const description = stripSqlString(obj.description || '');
-      const startStr = stripSqlString(obj.start_date || obj.start || '');
-      const endStr = stripSqlString(obj.end_date || obj.end || '');
-      const allDayRaw = String(obj.all_day || 'false').toLowerCase();
-      const color = stripSqlString(obj.color || '#3788d8') || '#3788d8';
-      const startDate = parseLocalDateTime(startStr) || new Date(startStr);
-      const endDate = parseLocalDateTime(endStr) || new Date(endStr || startStr);
-      try {
-        const saved = await window.authSystem.createEvent({
-          title,
-          description,
-          start: startDate.toISOString(),
-          end: endDate.toISOString(),
-          allDay: /true|1/i.test(allDayRaw),
-          backgroundColor: color
-        });
-        calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
-        inserted++;
-      } catch (e) {
-        console.error('Failed to insert via SQL mapping:', e);
+      if (!inQuote && ch === '(') {
+        if (depth === 0) startIdx = i;
+        depth++;
+      } else if (!inQuote && ch === ')') {
+        depth--;
+        if (depth === 0 && startIdx >= 0) {
+          res.push(valuesBlock.slice(startIdx + 1, i));
+          startIdx = -1;
+        }
+      }
+    }
+    return res;
+  }
+
+  for (let s of stmts) {
+    // INSERT handling (schema-qualified + optional RETURNING + multi-row VALUES)
+    const sNoRet = s.replace(/\breturning\b[\s\S]*$/i, '').trim();
+    const insMatch = sNoRet.match(/^insert\s+into\s+([\w"\.]+)\s*\(([^)]+)\)\s*values\s*([\s\S]+)$/i);
+    if (insMatch && normalizeTableSegment(insMatch[1])) {
+      const columns = insMatch[2].split(',').map(x => x.replace(/"/g,'').trim().toLowerCase());
+      const tuples = splitValueTuples(insMatch[3]);
+      for (const tuple of tuples) {
+        const values = tokenizeSqlValues(tuple);
+        if (columns.length !== values.length) continue;
+        const obj = {};
+        for (let i=0;i<columns.length;i++) obj[columns[i]] = values[i];
+        const title = stripSqlString(obj.title || obj.TITLE);
+        const description = stripSqlString(obj.description || '');
+        const startStr = stripSqlString(obj.start_date || obj.start || '');
+        const endStr = stripSqlString(obj.end_date || obj.end || '');
+        const allDayRaw = String(obj.all_day || 'false').toLowerCase();
+        const color = stripSqlString(obj.color || '#3788d8') || '#3788d8';
+        const startDate = parseLocalDateTime(startStr) || new Date(startStr);
+        const endDate = parseLocalDateTime(endStr) || new Date(endStr || startStr);
+        try {
+          const saved = await window.authSystem.createEvent({
+            title,
+            description,
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+            allDay: /true|1/i.test(allDayRaw),
+            backgroundColor: color
+          });
+          calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+          inserted++;
+        } catch (e) {
+          console.error('Failed to insert via SQL mapping:', e);
+        }
       }
       continue;
     }
-    if (/^delete\s+from\s+events\b/i.test(s)) {
-      // Support simple WHERE by date or title
-      const where = s.split(/\bwhere\b/i)[1] || '';
-      let dateEq = null, titleEq = null;
-      const md = where.match(/date\(start_date\)\s*=\s*'([^']+)'/i);
-      if (md) dateEq = md[1];
-      const mt = where.match(/title\s*=\s*'([^']+)'/i);
-      if (mt) titleEq = mt[1];
+
+    // DELETE handling (schema-qualified; support WHERE user_id or simple filters)
+    const delMatch = s.match(/^delete\s+from\s+([\w"\.]+)\s*(?:where\s+([\s\S]+))?$/i);
+    if (delMatch && normalizeTableSegment(delMatch[1])) {
+      const where = delMatch[2] || '';
       try {
-        const events = await window.authSystem.getEvents();
-        const toDelete = events.filter(ev => {
-          const d = new Date(ev.start_date).toISOString().slice(0,10);
-          const okDate = dateEq ? (d === dateEq) : true;
-          const okTitle = titleEq ? (ev.title === titleEq) : true;
-          return okDate && okTitle;
-        });
-        for (const ev of toDelete) {
-          await window.authSystem.deleteEvent(ev.id);
-          const ce = calendar.getEventById(ev.id);
-          if (ce) ce.remove();
-          deleted++;
+        if (!where || /\buser_id\b/i.test(where)) {
+          await window.authSystem.deleteAllEvents();
+          (calendar.getEvents() || []).forEach(ev => ev.remove());
+          // Count roughly as number removed
+          deleted += 1; // at least reflect an action
+        } else {
+          const events = await window.authSystem.getEvents();
+          const md = where.match(/date\(start_date\)\s*=\s*'([^']+)'/i);
+          const mt = where.match(/title\s*=\s*'([^']+)'/i);
+          const dateEq = md ? md[1] : null;
+          const titleEq = mt ? mt[1] : null;
+          const toDelete = events.filter(ev => {
+            const d = new Date(ev.start_date).toISOString().slice(0,10);
+            const okDate = dateEq ? (d === dateEq) : true;
+            const okTitle = titleEq ? (ev.title === titleEq) : true;
+            return okDate && okTitle;
+          });
+          for (const ev of toDelete) {
+            await window.authSystem.deleteEvent(ev.id);
+            const ce = calendar.getEventById(ev.id);
+            if (ce) ce.remove();
+            deleted++;
+          }
         }
       } catch (e) { console.error('Delete via SQL mapping failed:', e); }
       continue;
     }
-    if (/^update\s+events\b/i.test(s)) {
-      // Not implemented robustly; skip for now or future extension
-      console.warn('UPDATE not supported in client SQL executor yet.');
-      continue;
-    }
-    if (/^select\b/i.test(s)) {
-      // We could optionally run a client-side filter and echo a brief count
+
+    // UPDATE and SELECT not applied to UI yet
+    if (/^update\s+/i.test(s) || /^select\s+/i.test(s)) {
       continue;
     }
   }
@@ -1118,7 +1214,9 @@ async function askChatGPT(message, calendar, options = {}) {
   const systemPrompt = buildSystemPrompt();
   const messages = [ { role: 'system', content: systemPrompt }, { role: 'user', content: message } ];
   try {
-    const data = await safeFetchJSON('/api/openai-edge', {
+    const base = await resolveApiBase();
+    const url = base ? `${base}/api/openai-edge` : '/api/openai-edge';
+    const data = await safeFetchJSON(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages })
     });
     hideLoading();
@@ -1141,60 +1239,4 @@ async function askChatGPT(message, calendar, options = {}) {
     if (!base) appendMessage('bot', '❌ The AI API endpoint is not reachable.');
     else appendMessage('bot', `❌ The AI API at ${base} is not returning JSON.`);
   }
-}
-
-// Show greeting on load
-appendMessage('bot', 'Hey! I’m your study buddy for planning and scheduling. Try “Add volleyball practice Thu 7pm” or “export to google calendar”. I can also generate a full schedule — just say “make me a schedule”.')
-
-loadUserMemory()
-
-// Safe JSON fetch: throws with readable text when response isn't JSON
-async function safeFetchJSON(input, init) {
-  const res = await fetch(input, init);
-  const ct = res.headers.get('content-type') || '';
-  if (!res.ok) {
-    if (ct.includes('application/json')) {
-      let err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(`API Error ${res.status}: ${typeof err === 'string' ? err : (err.error || JSON.stringify(err)).slice(0,200)}`);
-    } else {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`API Error ${res.status}: ${txt.slice(0,200)}`);
-    }
-  }
-  if (!ct.includes('application/json')) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`Server returned non-JSON: ${txt.slice(0,200)}`);
-  }
-  return res.json();
-}
-
-// Resolve API base URL for /api calls. Supports:
-// 1) Same-origin (when served via a server)
-// 2) Global window.API_BASE
-// 3) localStorage apiBase
-let __apiBasePromise;
-async function resolveApiBase() {
-  if (__apiBasePromise) return __apiBasePromise;
-  __apiBasePromise = (async () => {
-    // 1) Same-origin health check (works in vercel dev/deploy)
-    try {
-      if (location.protocol.startsWith('http')) {
-        if (await pingJSON('/api/health')) return '';
-      }
-    } catch {}
-    // 2) window.API_BASE (set in index.html or elsewhere)
-    const globalBase = (typeof window !== 'undefined' && window.API_BASE) ? String(window.API_BASE).replace(/\/$/,'') : '';
-    if (globalBase) {
-      if (await pingJSON(`${globalBase}/api/health`)) return globalBase;
-    }
-    // 3) localStorage
-    try {
-      const storedRaw = localStorage.getItem('apiBase') || '';
-      const stored = storedRaw.replace(/\/$/,'')
-      if (stored && await pingJSON(`${stored}/api/health`)) return stored;
-    } catch {}
-    // No prompt fallback; just return empty to stay non-blocking
-    return '';
-  })();
-  return __apiBasePromise;
 }
