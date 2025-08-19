@@ -927,7 +927,7 @@ async function applyWeekdayJobAdjustment(calendar, baseStart, requestedHoursPerW
   const titles = ['Part-time Job','Commute to Work','Commute Home'];
   for (const ev of calendar.getEvents()) {
     if (titles.includes(ev.title) && isWeekend(ev.start)) {
-      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
+      try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
       ev.remove();
     }
   }
@@ -1137,6 +1137,87 @@ async function askChatGPT(messages) {
   return data.choices[0].message?.content || null;
 }
 
+// Parse a single time like "at 3pm" or "3:30"; returns HH:MM or null
+function parseSingleTime(text) {
+  if (!text) return null;
+  const m = String(text).toLowerCase().match(/(?:\bat\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
+  if (!m) return null;
+  let hh = parseInt(m[1], 10);
+  let mm = parseInt(m[2] || '00', 10);
+  const ap = m[3];
+  if (ap) {
+    if (ap === 'pm' && hh < 12) hh += 12;
+    if (ap === 'am' && hh === 12) hh = 0;
+  }
+  return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+
+function nextHourRange(base = new Date(), durHours = 1) {
+  const start = new Date(base);
+  start.setMinutes(0,0,0);
+  start.setHours(start.getHours() + (base.getMinutes() > 0 ? 1 : 0));
+  const end = new Date(start.getTime() + durHours * 3600000);
+  return { start, end };
+}
+
+async function addGeneralEventFromText(text, calendar) {
+  try {
+    const t = String(text || '').trim();
+    // Title extraction
+    let title = null;
+    // Prefer explicit "add <title>" format
+    const addMatch = t.match(/^add\s+(.+)$/i);
+    if (addMatch) {
+      title = addMatch[1].trim();
+    } else {
+      title = extractTitleFromMessage(t);
+    }
+    if (!title) return false;
+
+    // Day and time parsing
+    const day = detectWeekday(t) || new Date().toLocaleDateString(undefined, { weekday: 'long' });
+    let range = parseTimeRangeFlexible(t);
+    if (!range) {
+      const at = parseSingleTime(t);
+      if (at) {
+        const s = dateForWeekdayFrom(new Date(), day, at, 0);
+        const e = new Date(s.getTime() + 60 * 60 * 1000);
+        range = { start: at, end: `${String((s.getHours()+1)%24).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}` };
+      }
+    }
+
+    let start, end;
+    if (range) {
+      start = dateForWeekdayFrom(new Date(), day, range.start, 0);
+      end = dateForWeekdayFrom(new Date(), day, range.end, 0);
+      // If end wraps before start, add a day
+      if (end <= start) end = new Date(start.getTime() + 60 * 60 * 1000);
+    } else {
+      // Default to next rounded hour today
+      const r = nextHourRange(new Date(), 1);
+      start = r.start; end = r.end;
+    }
+
+    // Save via authSystem if available, else local
+    try {
+      if (window.authSystem?.createEvent) {
+        const saved = await window.authSystem.createEvent({ title, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#6f42c1', description: '' });
+        calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color });
+      } else {
+        calendar.addEvent({ title, start, end, backgroundColor: '#6f42c1', borderColor: '#6f42c1', textColor: '#fff' });
+      }
+    } catch (e) {
+      // Fallback to local add on any failure
+      calendar.addEvent({ title, start, end, backgroundColor: '#6f42c1', borderColor: '#6f42c1', textColor: '#fff' });
+    }
+
+    appendMessage('bot', `${randomAck('added')}: ${title} on ${start.toLocaleDateString()} ${start.toTimeString().slice(0,5)}–${end.toTimeString().slice(0,5)}`);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Handle user input at the top level
 async function handleUserInput(msg, calendar) {
   const text = String(msg || '').trim();
@@ -1157,6 +1238,12 @@ async function handleUserInput(msg, calendar) {
     return;
   }
 
+  // Lightweight local add command to avoid AI dependency
+  if (/^add\b/i.test(text) || /^please\s+add\b/i.test(text)) {
+    const ok = await addGeneralEventFromText(text, calendar);
+    if (ok) return;
+  }
+
   // Fallback to AI small talk/help
   showLoading();
   const reply = await askChatGPT([
@@ -1172,7 +1259,7 @@ async function handleUserInput(msg, calendar) {
 (function setupChatUI() {
   if (!chatInput || !sendBtn || !chatMessages) return;
   // Greet
-  appendMessage('bot', 'Hi! I can build your two-week schedule. Type "generate schedule" to start, or ask me anything.');
+  appendMessage('bot', 'Hi! I can build your two-week schedule. Type "generate schedule" to start, or say "add <title> Tue 3-4pm" to add an event.');
 
   const getCal = () => window.calendar;
   sendBtn.addEventListener('click', async () => {
