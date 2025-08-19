@@ -1206,6 +1206,54 @@ async function executeSqlStatements(sqlText, calendar) {
   return { inserted, deleted };
 }
 
+// SQL helper: detect VALUES-only snippets like: (..), (..), (...)
+function isValuesOnlySql(text) {
+  if (!text || typeof text !== 'string') return false;
+  const s = text.trim();
+  if (/\b(insert|update|delete|select)\b/i.test(s)) return false;
+  // Starts with '(' and is a comma-separated list of parenthesized tuples
+  return /^\(.*\)\s*(,\s*\(.*\)\s*)*;?$/s.test(s);
+}
+
+function wrapValuesIntoInsert(valuesText) {
+  const DEFAULT_INSERT_PREFIX = 'insert into public.events (user_id, title, description, start, end, all_day, color, created_at, updated_at) values ';
+  let v = valuesText.trim();
+  if (v.endsWith(';')) v = v.slice(0, -1);
+  return DEFAULT_INSERT_PREFIX + v + ';';
+}
+
+function countValuesTuples(sqlText) {
+  if (!sqlText) return 0;
+  const m = sqlText.match(/values\s*(\(.*?\))\s*(,\s*\(.*?\)\s*)*/is);
+  if (m) {
+    const body = m[0];
+    const tuples = body.match(/\([^()]*\)/g);
+    return tuples ? tuples.length : 0;
+  }
+  // If it was values-only, count there
+  if (isValuesOnlySql(sqlText)) {
+    const tuples = sqlText.match(/\([^()]*\)/g);
+    return tuples ? tuples.length : 0;
+  }
+  return 0;
+}
+
+function buildAckFromStats(stats, fallbackSql) {
+  if (stats && (stats.inserted || stats.deleted)) {
+    const parts = [];
+    if (stats.inserted) parts.push(`${stats.inserted} event${stats.inserted === 1 ? '' : 's'} added`);
+    if (stats.deleted) parts.push(`${stats.deleted} event${stats.deleted === 1 ? '' : 's'} deleted`);
+    return parts.join(', ') + '.';
+  }
+  // Guess from SQL if no stats provided
+  if (fallbackSql) {
+    const insertedGuess = countValuesTuples(fallbackSql);
+    if (insertedGuess > 0) return `${insertedGuess} event${insertedGuess === 1 ? '' : 's'} added.`;
+    if (/\bdelete\s+from\s+\S*events\b/i.test(fallbackSql)) return 'Events deleted.';
+  }
+  return '';
+}
+
 // --- askChatGPT updated flow to use SQL-first prompt ---
 async function askChatGPT(message, calendar, options = {}) {
   const apiKey = await getOpenAIApiKey();
@@ -1214,9 +1262,19 @@ async function askChatGPT(message, calendar, options = {}) {
   const systemPrompt = buildSystemPrompt();
   const messages = [ { role: 'system', content: systemPrompt }, { role: 'user', content: message } ];
   try {
-    const base = await resolveApiBase();
+    let base = '';
+    try { if (typeof resolveApiBase === 'function') base = await resolveApiBase(); } catch {}
     const url = base ? `${base}/api/openai-edge` : '/api/openai-edge';
-    const data = await safeFetchJSON(url, {
+
+    const fetchJson = (typeof safeFetchJSON === 'function') ? safeFetchJSON : async (u, init) => {
+      const res = await fetch(u, init);
+      if (!res.ok) throw new Error(`API Error ${res.status}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server returned non-JSON');
+      return res.json();
+    };
+
+    const data = await fetchJson(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages })
     });
     hideLoading();
@@ -1226,16 +1284,35 @@ async function askChatGPT(message, calendar, options = {}) {
       cleanText = cleanText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
     }
     const { sql, response } = splitAiSqlAndResponse(cleanText);
-    if (sql) {
-      await executeSqlStatements(sql, calendar);
+
+    let execSql = sql;
+    if (execSql && isValuesOnlySql(execSql)) {
+      // If AI returned only VALUES tuples, wrap them into a full INSERT for public.events
+      execSql = wrapValuesIntoInsert(execSql);
     }
-    // Show the short English response (or fallback)
-    if (response) appendMessage('bot', response.trim());
-    else appendMessage('bot', 'Done.');
+
+    let stats = null;
+    if (execSql) {
+      try {
+        const maybeStats = await executeSqlStatements(execSql, calendar);
+        if (maybeStats && typeof maybeStats === 'object') stats = maybeStats;
+      } catch (e) {
+        console.error('SQL execution error:', e);
+        throw e;
+      }
+    }
+
+    if (response) {
+      appendMessage('bot', response.trim());
+    } else {
+      const ack = buildAckFromStats(stats, execSql) || (typeof randomAck === 'function' ? randomAck() : 'Done.');
+      appendMessage('bot', ack);
+    }
   } catch (err) {
     hideLoading();
     console.error('ChatGPT API Error:', err);
-    const base = await resolveApiBase();
+    let base = '';
+    try { if (typeof resolveApiBase === 'function') base = await resolveApiBase(); } catch {}
     if (!base) appendMessage('bot', '❌ The AI API endpoint is not reachable.');
     else appendMessage('bot', `❌ The AI API at ${base} is not returning JSON.`);
   }
