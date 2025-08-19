@@ -26,6 +26,72 @@ const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 
+// Add helpers and send handler
+async function pingJSON(url) {
+  try {
+    const res = await fetch(url, { method: 'GET' });
+    return res.ok;
+  } catch { return false; }
+}
+
+function randomAck(extra) {
+  const arr = ['Done', 'All set', 'Great', 'Okay', 'Got it', 'Success'];
+  const pick = arr[Math.floor(Math.random() * arr.length)];
+  return extra ? `${pick}, ${extra}` : pick;
+}
+
+async function clearAllEvents(calendar) {
+  try { await window.authSystem?.deleteAllEvents?.(); } catch {}
+  try {
+    if (calendar && typeof calendar.getEvents === 'function') {
+      calendar.getEvents().forEach(ev => ev.remove());
+    }
+  } catch {}
+  appendMessage('bot', 'All events deleted.');
+}
+
+async function handleSend() {
+  const text = (chatInput?.value || '').trim();
+  if (!text) return;
+  appendMessage('user', text);
+  chatInput.value = '';
+  const calendar = window.calendar;
+
+  // Route active wizard answers
+  if (typeof scheduleWizard !== 'undefined' && scheduleWizard?.active) {
+    const handled = await handleScheduleWizardAnswer(text, calendar);
+    if (handled) return;
+  }
+
+  const lower = text.toLowerCase();
+
+  // Immediate delete-all/reset commands
+  if (/(^|\b)(delete all|reset calendar|clear all)(\b|$)/i.test(lower)) {
+    await clearAllEvents(calendar);
+    return;
+  }
+
+  // Direct date-range daily events
+  try {
+    const handledRange = await tryHandleRangeEvents(text, calendar);
+    if (handledRange) return;
+  } catch (e) {
+    console.warn('Range handler failed:', e);
+  }
+
+  showLoading();
+  await askChatGPT(text, calendar);
+}
+
+// Wire up button and Enter key
+if (sendBtn) sendBtn.addEventListener('click', () => handleSend());
+if (chatInput) chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    handleSend();
+  }
+});
+
 function appendMessage(sender, text) {
   const div = document.createElement('div');
   div.className = sender === 'user' ? 'chat-user' : 'chat-bot';
