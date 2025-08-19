@@ -1347,7 +1347,7 @@ async function tryHandleAddCourse(msg, calendar) {
     const groupKeys = getCourseGroupKeys(course);
     let chosen = null;
     // "group A" / "group B"
-    const gm = lower.match(/group\s*([a-z])/i);
+    const gm = lower.match(/group\s*([a])/i);
     if (gm) {
       const gLetter = gm[1].toUpperCase();
       chosen = groupKeys.find(k => k.toUpperCase().includes(gLetter));
@@ -1380,210 +1380,6 @@ async function tryHandleAddCourse(msg, calendar) {
   }
 }
 
-async function handleUserInput(msg, calendar) {
-  const lower = msg.toLowerCase();
-  // Intercept direct course add first
-  try {
-    const handledAdd = await tryHandleAddCourse(msg, calendar);
-    if (handledAdd) return;
-  } catch (e) { /* fall through to other handlers */ }
-  // Trigger schedule generation
-  const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
-  if (genSchedule) {
-    await startScheduleWizard(calendar);
-    return;
-  }
-  if (scheduleWizard.active) {
-    const handled = await handleScheduleWizardAnswer(msg, calendar);
-    if (handled) return;
-  }
-  // Quick commands to clear everything
-  if (/(^|\b)(clear|reset)\s+(calendar|schedule)\b/i.test(msg) || /^(delete|remove)\s+all(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?\b/i.test(msg) || /^delete\s+everything/i.test(msg)) {
-    await clearAllEvents(calendar);
-    return;
-  }
-  // New: delete category in a time window, e.g., "delete all club activities from last week of September"
-
-  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+(from|in|between|during)\s+(.+)/i);
-  if (m) {
-    const categoryPhrase = m[3].trim();
-    const timePhrase = m[5].trim();
-    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
-    return;
-  }
-  // Also support commands without preposition: "delete clubs last week of September"
-  m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
-  if (m) {
-    const categoryPhrase = m[3].trim();
-    const timePhrase = m[4].trim();
-    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
-    return;
-  }
-  // Check for Google Calendar export commands
-  if (/^(export|sync)\s*(to\s*)?(google\s*calendar|gcal)/i.test(msg) || /export.*google/i.test(msg)) {
-    // Debug logs
-    const exportBtn = document.getElementById('gcal-export-btn');
-    const userInfo = document.getElementById('gcal-user-info');
-    const signInBtn = document.getElementById('gcal-signin-btn');
-    
-    console.log('Export command detected');
-    console.log('Export button:', exportBtn, exportBtn?.style.display, exportBtn?.offsetParent);
-    console.log('User info:', userInfo, userInfo?.style.display);
-    console.log('Sign in button:', signInBtn, signInBtn?.style.display);
-    
-    // Check if user is signed in using multiple methods
-    const isSignedIn = (exportBtn && exportBtn.style.display === 'inline-block') ||
-                      (exportBtn && exportBtn.offsetParent !== null) ||
-                      (userInfo && userInfo.style.display === 'flex') ||
-                      (signInBtn && signInBtn.style.display === 'none');
-    
-    console.log('Is signed in:', isSignedIn);
-    
-    if (isSignedIn) {
-      // User is signed in, trigger export
-      appendMessage('bot', '📤 Starting export process...');
-      if (typeof exportCalendarToGoogle === 'function') {
-        try {
-          exportCalendarToGoogle();
-        } catch (error) {
-          console.error('Export error:', error);
-          appendMessage('bot', '❌ Export failed. Please try clicking the "Export to Google Calendar" button instead.');
-        }
-      } else {
-        appendMessage('bot', '❌ Export function is not available. Please try clicking the "Export to Google Calendar" button instead.');
-      }
-    } else {
-      // User is not signed in
-      appendMessage('bot', '🔐 To export to Google Calendar, please first click "Connect Google Calendar" button above, then try the export command again.');
-    }
-    return;
-  }
-  
-  // Check for Google Calendar connection commands
-  if (/^(connect|sign\s*in|login).*google/i.test(msg) || /google.*connect/i.test(msg)) {
-    appendMessage('bot', 'Please click the "Connect Google Calendar" button above to sign in with your Google account.');
-    return;
-  }
-  
-  // Check for update/change commands
-  if (/^(update|change|modify)\s+|want to change|want to update/i.test(msg)) {
-    await handleUpdateCommand(msg, calendar);
-    return;
-  }
-  
-  // Check for delete command
-  if (/^delete\s+/i.test(msg)) {
-    const eventName = msg.replace(/^delete\s+/i, '').trim();
-    // If request looks like deleting everything, route to clearAll
-    if (/^(all|everything)(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?$/i.test(eventName) || /(all\s+events|entire\s+(calendar|schedule))/i.test(eventName)) {
-      await clearAllEvents(calendar);
-      return;
-    }
-    if (eventName) {
-      deleteEvent(eventName, calendar);
-      return;
-    } else {
-      appendMessage('bot', 'Please specify what you want to delete. For example: "delete volleyball practice"');
-      return;
-    }
- }
-  
-  // Check if waiting for group
-  if (pendingCourse && !pendingGroup) {
-    let group = null;
-    if (/A|Monday/i.test(msg)) group = 'Group A';
-    if (/B|Thursday/i.test(msg)) group = 'Group B';
-    if (group) {
-      hideLoading();
-      addCourseToCalendar(pendingCourse, group, calendar);
-      appendMessage('bot', `${randomAck()} — added ${pendingCourse.short_name} for ${group}.`);
-      pendingCourse = null;
-      pendingGroup = null;
-    } else {
-      hideLoading();
-      appendMessage('bot', 'Which group works for you: A (Monday) or B (Thursday)?');
-    }
-    return;
-  }
-  // If waiting for general event info, try to combine with pending draft and schedule directly
-  if (pendingGeneralEvent) {
-    // Try to parse weekday + time range from the user's reply
-    const weekday = detectWeekday(msg)
-    const tr = parseTimeRangeFlexible(msg) || null
-    if (pendingDraft.title && weekday && tr) {
-      const startTime = toHHMM(tr.startHour, tr.startMinute)
-      const endTime = toHHMM(tr.endHour, tr.endMinute)
-      const startDate = nextWeekdayDate(weekday, startTime)
-      const endDate = nextWeekdayDate(weekday, endTime)
-      try {
-        const saved = await window.authSystem.createEvent({
-          title: pendingDraft.title,
-          start: startDate.toISOString(),
-          end: endDate.toISOString(),
-          allDay: false,
-          backgroundColor: '#6f42c1',
-          description: ''
-        })
-        rememberActivity('general', saved.title, new Date(saved.start_date), new Date(saved.end_date))
-        try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-        calendar.addEvent({
-          id: saved.id,
-          title: saved.title,
-          start: saved.start_date,
-          end: saved.end_date,
-          allDay: saved.all_day,
-          backgroundColor: saved.color,
-          extendedProps: { description: saved.description }
-        })
-        appendMessage('bot', `Added ${saved.title} on ${weekday} ${startTime}-${endTime}.`)
-      } catch (e) {
-        console.warn('Direct schedule failed, falling back to AI:', e)
-        showLoading();
-        askChatGPT(msg, calendar, {isCourse: false});
-        return;
-      }
-      // clear pending state
-      pendingGeneralEvent = false
-      pendingDraft.title = null
-      return
-    }
-    // Fallback to AI if we cannot fully resolve
-    showLoading();
-    askChatGPT(msg, calendar, {isCourse: false});
-    return;
-  }
-  // Let AI handle ALL course detection and event creation
-  showLoading();
-  askChatGPT(msg, calendar, {isCourse: 'auto'});
-}
-
-// Parse a datetime string as LOCAL time when no timezone is provided
-function parseLocalDateTime(input) {
-  if (!input) return null;
-  if (input instanceof Date) return new Date(input.getTime());
-  if (typeof input === 'number') return new Date(input);
-  let str = String(input).trim();
-  // If explicit numeric offset (+09:00 or -0700), trust it
-  if (/[+\-]\d{2}:?\d{2}$/.test(str)) {
-    const d = new Date(str);
-    return isNaN(d) ? null : d;
-  }
-  // If ends with 'Z' (UTC) but user likely means local, strip it and treat as local
-  if (/[zZ]$/.test(str)) {
-    str = str.replace(/[zZ]$/, '');
-  }
-  // Match forms: YYYY-MM-DD, YYYY-MM-DDTHH:mm[:ss], or with space instead of T
-  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-  if (m) {
-    const [, y, mo, d, h = '00', mi = '00', s = '00'] = m;
-    const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
-    return isNaN(dt) ? null : dt;
-  }
-  // Fallback to native parsing
-  const d = new Date(str);
-  return isNaN(d) ? null : d;
-}
-
 // Send button logic - robust binding
 function bindSendControls() {
   const inputEl = document.getElementById('chat-input');
@@ -1608,10 +1404,10 @@ function bindSendControls() {
 
 // Bind send button controls on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', async () => {
-  bindSendControls()
+  bindSendControls();
   // refresh memory from server once logged in
   try { await loadUserMemory(); await window.authSystem.updateMemoryFromEvents() } catch {}
-})
+});
 
 function parseClubsInputToBlocks(input, knownClubs = []) {
   // Parse patterns like "Soccer Tue 18:00-20:00", "Volleyball Saturday 10:00-12:00",
@@ -1683,7 +1479,6 @@ function isSlotFree(calendar, start, end) {
   try {
     const events = calendar.getEvents();
     for (const ev of events) {
-      // Skip all-day placeholders if any
       const evStart = new Date(ev.start);
       const evEnd = new Date(ev.end || ev.start);
       if (eventsOverlap(start, end, evStart, evEnd)) return false;
@@ -1737,141 +1532,64 @@ function allocateStudyBlocks(pref = 'morning') {
   return blocks[pref] || blocks.morning;
 }
 
-// New helpers: natural date range parsing for deletion commands
-function monthNameToIndex(name) {
-  const map = {
-    january:0,february:1,march:2,april:3,may:4,june:5,
-    july:6,august:7,september:8,october:9,november:10,december:11,
-    jan:0,feb:1,mar:2,apr:3,may_:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11
-  };
-  const key = String(name||'').toLowerCase().replace(/\.$/,'')
-  if (key === 'may') return 4; // disambiguate may
-  return map[key] ?? null;
-}
+// Improve delete command parsing to keep the 'all' qualifier
+async function handleUserInput(msg, calendar) {
+  // Check for schedule wizard first
+  const wiz = scheduleWizard;
+  if (wiz.active) {
+    const handled = await handleScheduleWizardAnswer(msg, calendar);
+    if (handled) return;
+  }
 
-function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x; }
-function endOfDay(d){ const x = new Date(d); x.setHours(23,59,59,999); return x; }
-
-function lastDayOfMonth(year, monthIndex) { return new Date(year, monthIndex + 1, 0).getDate(); }
-
-function weekRangeContaining(date) {
-  const d = new Date(date);
-  const dow = d.getDay(); // 0 Sun..6 Sat
-  // We use Monday-Sunday range
-  const monday = new Date(d); const offset = (dow === 0 ? -6 : 1 - dow); monday.setDate(d.getDate() + offset); monday.setHours(0,0,0,0);
-  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6); sunday.setHours(23,59,59,999);
-  return { start: monday, end: sunday };
-}
-
-function firstWeekOfMonth(year, m) {
-  // week that contains the 1st of the month
-  return weekRangeContaining(new Date(year, m, 1));
-}
-function lastWeekOfMonth(year, m) {
-  // week that contains the last day of the month
-  const last = new Date(year, m, lastDayOfMonth(year, m));
-  return weekRangeContaining(last);
-}
-function monthRange(year, m) {
-  return {
-    start: startOfDay(new Date(year, m, 1)),
-    end: endOfDay(new Date(year, m, lastDayOfMonth(year, m)))
-  };
-}
-
-function parseDateFromMonthDay(text, defaultYear) {
-  // e.g., "Sep 15 2025", "September 20", "9/21/2025"
-  const t = String(text||'').trim();
-  // Month name + day [year]
-  let m = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
+  // Generic command parsing - detect and handle specific commands first
+  msg = msg.trim();
+  // Help command
+  if (/^help$/i.test(msg)) {
+    appendMessage('bot', `I can assist with course planning and scheduling! Try commands like:
+- "Add course code to calendar"
+- "Show my schedule"
+- "Delete event from calendar"
+- "Make me a study plan"`);
+    return;
+  }
+  // List courses command
+  if (/^(list|show)\s+courses?/i.test(msg)) {
+    const courses = window.coursesList;
+    if (!Array.isArray(courses) || !courses.length) {
+      appendMessage('bot', 'No courses found. Please add courses first using "Add course code" command.');
+    } else {
+      const courseList = courses.map(c => `${c.course} (${c.short_name || 'No code'})`).join('\n');
+      appendMessage('bot', `Here are your courses:\n${courseList}`);
+    }
+    return;
+  }
+  // Show schedule command
+  if (/^(show|export)\s+schedule/i.test(msg)) {
+    appendMessage('bot', 'To which calendar do you want to export? Options: Google Calendar, Outlook, iCal');
+    return;
+  }
+  // Delete event command
+  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+(from|in|between|during)\s+(.+)/i);
   if (m) {
-    const mon = monthNameToIndex(m[1]); const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : defaultYear;
-    return new Date(yr, mon, day);
+    const categoryPhrase = ((m[2] || '') + m[3]).trim();
+    const timePhrase = m[5].trim();
+    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
+    return;
   }
-  // Numeric like 9/21[/2025]
-  m = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
+  // Also support commands without preposition: "delete clubs last week of September"
+  m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
   if (m) {
-    const mon = parseInt(m[1],10)-1; const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : defaultYear; if (yr < 100) yr += 2000;
-    return new Date(yr, mon, day);
+    const categoryPhrase = ((m[2] || '') + m[3]).trim();
+    const timePhrase = m[4].trim();
+    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
+    return;
   }
-  // ISO yyyy-mm-dd
-  m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return new Date(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10));
-  return null;
-}
 
-function parseDateRangeNatural(text, reference = new Date(), baseSemester = (scheduleWizard?.data?.baseSemester || null)) {
-  const refYear = baseSemester?.start?.getFullYear?.() || reference.getFullYear();
-  const s = String(text||'');
-  // from X to Y
-  let m = s.match(/from\s+([^,]+?)\s+to\s+([^,]+)/i);
-  if (m) {
-    const d1 = parseDateFromMonthDay(m[1], refYear);
-    const d2 = parseDateFromMonthDay(m[2], refYear);
-    if (d1 && d2) return { start: startOfDay(d1), end: endOfDay(d2) };
-  }
-  // last/first week of MONTH [YEAR]
-  m = s.match(/(last|first)\s+week\s+of\s+(\w+)(?:\s+(\d{4}))?/i);
-  if (m) {
-    const which = m[1].toLowerCase(); const monIdx = monthNameToIndex(m[2]); const yr = m[3] ? parseInt(m[3],10) : refYear;
-    if (monIdx != null) return which === 'last' ? lastWeekOfMonth(yr, monIdx) : firstWeekOfMonth(yr, monIdx);
-  }
-  // week of MONTH DAY [YEAR]
-  m = s.match(/week\s+of\s+(\w+)\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
-  if (m) {
-    const monIdx = monthNameToIndex(m[1]); const day = parseInt(m[2],10); const yr = m[3] ? parseInt(m[3],10) : refYear;
-    if (monIdx != null) return weekRangeContaining(new Date(yr, monIdx, day));
-  }
-  // in MONTH [YEAR]
-  m = s.match(/\b(in|during)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?/i);
-  if (m) {
-    const monIdx = monthNameToIndex(m[2]); const yr = m[3] ? parseInt(m[3],10) : refYear; if (monIdx != null) return monthRange(yr, monIdx);
-  }
-  // last week (relative)
-  if (/\blast\s+week\b/i.test(s)) {
-    const last = new Date(reference); last.setDate(reference.getDate()-7); return weekRangeContaining(last);
-  }
-  return null;
-}
-
-function determineCategoriesFromPhrase(phrase) {
-  const t = String(phrase||'').toLowerCase();
-  const cats = [];
-  if (/club|activity|activities/.test(t)) cats.push('clubs');
-  if (/study|revision|reading/.test(t)) cats.push('study');
-  if (/job|work|shift|baito|commute/.test(t)) cats.push('job');
-  if (/project|research|thesis|capstone/.test(t)) cats.push('project');
-  if (/course|lecture|exercise|class/.test(t)) cats.push('course');
-  if (!cats.length) cats.push('general');
-  return cats;
-}
-
-function eventMatchesCategories(ev, categories) {
-  const title = (ev.title||'').toLowerCase();
-  const color = ev.backgroundColor || ev.color || '';
-  const has = (k)=>categories.includes(k);
-  if (has('course') && (/lecture|exercise/.test(title))) return true;
-  if (has('study') && /study/.test(title)) return true;
-  if (has('job') && (/(job|work|shift|commute)/.test(title))) return true;
-  if (has('project') && /project/.test(title)) return true;
-  if (has('clubs') && (/club/.test(title) || color === '#0ea5e9')) return true;
-  if (has('general') && !( /lecture|exercise|study|job|work|shift|project|commute|club/.test(title) )) return true;
-  return false;
-}
-
-async function deleteActivitiesInRange(categoryPhrase, timePhrase, calendar) {
-  const range = parseDateRangeNatural(timePhrase, new Date());
-  if (!range) { appendMessage('bot', "I couldn't understand the time range. Try phrases like 'last week of September', 'week of Sep 15', or 'from Sep 10 to Sep 20'."); return; }
-  const cats = determineCategoriesFromPhrase(categoryPhrase);
-  const events = calendar.getEvents();
-  const within = (d)=>{ const x = new Date(d).getTime(); return x >= range.start.getTime() && x <= range.end.getTime(); };
-  let removed = 0;
-  for (const ev of events) {
-    const s = ev.start; if (!s) continue; if (!within(s)) continue; if (!eventMatchesCategories(ev, cats)) continue;
-    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id) } catch {}
-    ev.remove(); removed++;
-  }
-  try { await window.authSystem.updateMemoryFromEvents(); sessionMemory = (await window.authSystem.getMemory()).summary_json } catch {}
-  if (removed === 0) appendMessage('bot', 'No matching events found in that time range.');
-  else appendMessage('bot', `${randomAck()} — deleted ${removed} ${removed===1?'event':'events'} in that range.`);
+  // Fallback: send to ChatGPT for natural language processing
+  showLoading();
+  askChatGPT(msg, calendar).catch(err => {
+    hideLoading();
+    appendMessage('bot', 'Error processing your request. Please try again or rephrase your question.');
+    console.error('ChatGPT request error:', err);
+  });
 }
