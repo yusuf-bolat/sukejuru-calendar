@@ -249,6 +249,24 @@ class SupabaseAuth {
     }
   }
 
+  async deleteAllEvents() {
+    await this.waitForReady()
+    const user = await this.getCurrentUser()
+    if (!user) throw new Error('Not authenticated')
+
+    try {
+      const { error } = await this.supabase
+        .from('events')
+        .delete()
+        .eq('user_id', user.id)
+      if (error) throw error
+      return true
+    } catch (error) {
+      console.error('Error deleting all events:', error)
+      throw new Error('Failed to delete all events')
+    }
+  }
+
   // Real-time subscription for events
   subscribeToEvents(callback) {
     const user = this.currentUser

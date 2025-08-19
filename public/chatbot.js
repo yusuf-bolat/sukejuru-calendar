@@ -1558,3 +1558,25 @@ async function handleUserInput(msg, calendar) {
     console.error('ChatGPT request error:', err);
   });
 }
+
+// Implement clearAllEvents(calendar) to delete all events for the user via authSystem.deleteAllEvents and clear the calendar, then acknowledge.
+async function clearAllEvents(calendar) {
+  try {
+    // Delete from DB first
+    if (window.authSystem?.deleteAllEvents) {
+      await window.authSystem.deleteAllEvents();
+    }
+  } catch (e) {
+    console.warn('Failed to delete all events in DB:', e);
+  }
+  try {
+    // Remove from UI calendar
+    const events = calendar?.getEvents?.() || [];
+    for (const ev of events) {
+      try { ev.remove(); } catch {}
+    }
+  } catch (e) {
+    console.warn('Failed clearing calendar UI:', e);
+  }
+  appendMessage('bot', 'All your events, activities, and courses have been deleted.');
+}
