@@ -873,23 +873,208 @@ I avoided clashes, used 5-hour job shifts with commute buffer, and placed clubs/
 }
 // ---------- End Schedule Wizard ----------
 
-// Enhance system prompt with memory
+// Enhance system prompt with memory (Replaced with SQL-first assistant rules)
 function buildSystemPrompt() {
   const today = new Date();
-  const memLines = (sessionMemory.activities || []).map(a => `- ${a.type}: ${a.name} on ${a.schedule?.weekday || '?'} ${a.schedule?.start || ''}-${a.schedule?.end || ''}`);
+  const userId = (window.authSystem && window.authSystem.currentUser && window.authSystem.currentUser.id) || 'CURRENT_USER_ID';
+  // Summarize known courses (short list to keep prompt size reasonable)
+  const courseLines = (Array.isArray(window.coursesList) ? window.coursesList.slice(0, 20) : []).map(c => `{"course":"${c.course}","short_name":"${c.short_name}","semester":${c.semester},"level":"${c.level}","lecture_credits":${Number(c.lecture_credits||0)},"exercise_credits":${Number(c.exercise_credits||0)}}`);
+
   return [
-    'You are a friendly, helpful university student consultant.',
-    'Keep answers concise, warm, and human — small emojis and short acknowledgements are welcome.',
-    'Use the following user memory to resolve pronouns and references precisely:',
-    ...memLines,
-    'Today is ' + today.toISOString().split('T')[0] + '. Always use this as the reference date for scheduling events.',
-    'You have access to the following list of courses:',
-    ...((window.coursesList && window.coursesList.length) ? window.coursesList.map(c => `- ${c.course}${c.short_name ? ' (' + c.short_name + ')' : ''}`) : []),
-    'IMPORTANT: When the user describes an activity, determine whether it matches a known course name/short name from the list above. Otherwise it is a general event.',
-    'If it matches a course, respond in JSON with the course schedule (lecture/exercise).',
-    'If it does NOT match any course, respond in JSON with event details (title, start, end, description).',
-    'If the user omits key info, ask one short, friendly question to clarify.'
+    'You are an expert AI scheduling assistant and SQL generator.',
+    'Your job is to understand natural English user input about university life, schedules, and activities, and always return two outputs in sequence:',
+    '1) The SQL query or queries that interact with the scheduling database.',
+    '2) A short, natural English confirmation or response for the user.',
+    '',
+    'DATABASE RULES',
+    'profiles(id, email, name, program, graduation_year, university_name, created_at, updated_at)',
+    'events(id, user_id, title, description, start_date, end_date, all_day, color, created_at, updated_at)',
+    `- Consider the active user id as: ${userId}`,
+    '- user_id always refers to the UUID of the active logged-in user.',
+    '- Supported event/activity types: "course", "club activity", "part-time job", "study session", "project work".',
+    '- A valid event requires: title, user_id, start_date, end_date.',
+    '- Default color = "#3788d8" unless user specifies otherwise.',
+    '',
+    'COURSE JSON RULES',
+    'You have access to a JSON file with all course info in the UI. When a user requests adding a course, extract lecture/exercise from it and compose SQL INSERTs for weekly events.',
+    'Example format:',
+    '{"course":"Ordinary Differential Equations","short_name":"ODE","semester":3,"level":"advanced","lecture_credits":2,"exercise_credits":1,"lecture":[["Martin SERA","Monday","10:40","12:10"]],"exercise":[["Martin SERA","Tuesday","16:20","17:50"]]}',
+    ...(courseLines.length ? ['Known courses sample:', ...courseLines] : []),
+    '',
+    'LOGIC & CONSTRAINT RULES',
+    '1. CRUD Support: Insert/Update/Select/Delete events as requested.',
+    '2. Overlap Handling: Avoid scheduling clashes; if overlap, suggest nearest available slot instead.',
+    '3. Incomplete Input: If only time, assign next valid day; if no duration, assume 1 hour.',
+    '4. Productivity Preferences: Respect best study time if specified; else default to afternoons (13:00–17:00).',
+    '5. Priorities: Courses/exams highest priority; part-time jobs fixed unless told; clubs/study flexible.',
+    '6. Questioning: If ambiguous, ask a clarifying question BEFORE generating SQL.',
+    '7. Safe Defaults: 1-hour blocks for study if no duration; assume start of upcoming week if no date.',
+    '',
+    'OUTPUT RULES',
+    'ALWAYS return raw SQL first (no markdown fences), then a single short English sentence.',
+    'If user asks to “show schedule,” return a SELECT query for that day/week, then say: "Here’s your schedule for [date/week]."',
+    '',
+    `Today is ${today.toISOString().split('T')[0]}.`
   ].join('\n');
+}
+
+// --- SQL parsing and execution helpers ---
+function splitAiSqlAndResponse(text) {
+  const t = String(text || '').trim();
+  if (!t) return { sql: '', response: '' };
+  // Heuristic: SQL first, then a blank line or line without SQL keywords
+  // Try to find the last semicolon that likely ends SQL
+  const lastSemi = t.lastIndexOf(';');
+  if (lastSemi > -1) {
+    const before = t.slice(0, lastSemi + 1).trim();
+    const after = t.slice(lastSemi + 1).trim();
+    // If "after" still contains SQL keywords as leading, keep expanding
+    if (/^(select|insert|update|delete)/i.test(after)) {
+      return { sql: t, response: '' };
+    }
+    return { sql: before, response: after };
+  }
+  // Fallback: treat first paragraph as SQL if it starts like SQL
+  const lines = t.split(/\n+/);
+  let idx = 0;
+  while (idx < lines.length && /^(\s*--|select|insert|update|delete|with)\b/i.test(lines[idx])) idx++;
+  const sql = lines.slice(0, idx).join('\n');
+  const response = lines.slice(idx).join('\n');
+  return { sql, response };
+}
+
+function tokenizeSqlValues(valuesStr) {
+  const res = [];
+  let i = 0, cur = '', inQuote = false;
+  while (i < valuesStr.length) {
+    const ch = valuesStr[i];
+    if (ch === "'") {
+      if (inQuote && valuesStr[i+1] === "'") { cur += "'"; i += 2; continue; }
+      inQuote = !inQuote; cur += ch; i++; continue;
+    }
+    if (!inQuote && ch === ',') { res.push(cur.trim()); cur = ''; i++; continue; }
+    cur += ch; i++;
+  }
+  if (cur.trim()) res.push(cur.trim());
+  return res;
+}
+
+function stripSqlString(v) {
+  const s = String(v || '').trim();
+  if (s.startsWith("'") && s.endsWith("'")) return s.slice(1, -1).replace(/''/g, "'");
+  return s;
+}
+
+async function executeSqlStatements(sqlText, calendar) {
+  const sql = String(sqlText || '').trim();
+  if (!sql) return { inserted: 0, deleted: 0, selected: 0 };
+  const stmts = sql.split(/;\s*(?=(?:[^']*'[^']*')*[^']*$)/).map(s => s.trim()).filter(Boolean);
+  let inserted = 0, deleted = 0; // selected count is optional
+  for (const s of stmts) {
+    if (/^insert\s+into\s+events\s*\(/i.test(s)) {
+      // Parse columns and values
+      const m = s.match(/^insert\s+into\s+events\s*\(([^)]+)\)\s*values\s*\((.+)\)\s*$/i);
+      if (!m) continue;
+      const columns = m[1].split(',').map(x => x.trim().replace(/"/g, ''));
+      const values = tokenizeSqlValues(m[2]);
+      if (columns.length !== values.length) continue;
+      const obj = {};
+      for (let i=0;i<columns.length;i++) {
+        obj[columns[i]] = values[i];
+      }
+      const title = stripSqlString(obj.title || obj.TITLE);
+      const description = stripSqlString(obj.description || '');
+      const startStr = stripSqlString(obj.start_date || obj.start || '');
+      const endStr = stripSqlString(obj.end_date || obj.end || '');
+      const allDayRaw = String(obj.all_day || 'false').toLowerCase();
+      const color = stripSqlString(obj.color || '#3788d8') || '#3788d8';
+      const startDate = parseLocalDateTime(startStr) || new Date(startStr);
+      const endDate = parseLocalDateTime(endStr) || new Date(endStr || startStr);
+      try {
+        const saved = await window.authSystem.createEvent({
+          title,
+          description,
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          allDay: /true|1/i.test(allDayRaw),
+          backgroundColor: color
+        });
+        calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert via SQL mapping:', e);
+      }
+      continue;
+    }
+    if (/^delete\s+from\s+events\b/i.test(s)) {
+      // Support simple WHERE by date or title
+      const where = s.split(/\bwhere\b/i)[1] || '';
+      let dateEq = null, titleEq = null;
+      const md = where.match(/date\(start_date\)\s*=\s*'([^']+)'/i);
+      if (md) dateEq = md[1];
+      const mt = where.match(/title\s*=\s*'([^']+)'/i);
+      if (mt) titleEq = mt[1];
+      try {
+        const events = await window.authSystem.getEvents();
+        const toDelete = events.filter(ev => {
+          const d = new Date(ev.start_date).toISOString().slice(0,10);
+          const okDate = dateEq ? (d === dateEq) : true;
+          const okTitle = titleEq ? (ev.title === titleEq) : true;
+          return okDate && okTitle;
+        });
+        for (const ev of toDelete) {
+          await window.authSystem.deleteEvent(ev.id);
+          const ce = calendar.getEventById(ev.id);
+          if (ce) ce.remove();
+          deleted++;
+        }
+      } catch (e) { console.error('Delete via SQL mapping failed:', e); }
+      continue;
+    }
+    if (/^update\s+events\b/i.test(s)) {
+      // Not implemented robustly; skip for now or future extension
+      console.warn('UPDATE not supported in client SQL executor yet.');
+      continue;
+    }
+    if (/^select\b/i.test(s)) {
+      // We could optionally run a client-side filter and echo a brief count
+      continue;
+    }
+  }
+  return { inserted, deleted };
+}
+
+// --- askChatGPT updated flow to use SQL-first prompt ---
+async function askChatGPT(message, calendar, options = {}) {
+  const apiKey = await getOpenAIApiKey();
+  if (!apiKey) { appendMessage('bot', '❌ Server configuration error.'); return; }
+
+  const systemPrompt = buildSystemPrompt();
+  const messages = [ { role: 'system', content: systemPrompt }, { role: 'user', content: message } ];
+  try {
+    const data = await safeFetchJSON('/api/openai-edge', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages })
+    });
+    hideLoading();
+    let botText = data.choices?.[0]?.message?.content || '';
+    let cleanText = botText.trim();
+    if (cleanText.startsWith('```')) {
+      cleanText = cleanText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
+    }
+    const { sql, response } = splitAiSqlAndResponse(cleanText);
+    if (sql) {
+      await executeSqlStatements(sql, calendar);
+    }
+    // Show the short English response (or fallback)
+    if (response) appendMessage('bot', response.trim());
+    else appendMessage('bot', 'Done.');
+  } catch (err) {
+    hideLoading();
+    console.error('ChatGPT API Error:', err);
+    const base = await resolveApiBase();
+    if (!base) appendMessage('bot', '❌ The AI API endpoint is not reachable.');
+    else appendMessage('bot', `❌ The AI API at ${base} is not returning JSON.`);
+  }
 }
 
 // Show greeting on load
@@ -946,743 +1131,4 @@ async function resolveApiBase() {
     return '';
   })();
   return __apiBasePromise;
-}
-
-async function askChatGPT(message, calendar, options = {}) {
-  // API key is now handled securely server-side
-  const apiKey = await getOpenAIApiKey();
-  if (!apiKey) {
-    appendMessage('bot', '❌ Server configuration error. Please check the deployment.');
-    return;
-  }
-  
-  const today = new Date();
-  const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
-  const maxDateStr = maxDate.toISOString().split('T')[0];
-  const systemPrompt = buildSystemPrompt()
-
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: message }
-  ];
-
-  try {
-    // Call our secure serverless function instead of OpenAI directly
-    const data = await safeFetchJSON('/api/openai-edge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages })
-    });
-
-    hideLoading();
-    let botText = data.choices?.[0]?.message?.content || '';
-    let responded = false;
-    
-    // Remove code block markers if present
-    let cleanText = botText.trim();
-    if (cleanText.startsWith('```')) {
-      cleanText = cleanText.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-    }
-    
-    // Try to parse JSON response
-    let events = [];
-    let isValidJson = false;
-    try {
-      const parsed = JSON.parse(cleanText);
-      isValidJson = true;
-      
-      // Handle different JSON structures from AI
-      if (Array.isArray(parsed)) {
-        events = parsed;
-      } else if (parsed.events) {
-        events = parsed.events;
-      } else if (parsed.event) {
-        events = [parsed.event]; // Convert single event to array
-      } else if (parsed.title && parsed.start) {
-        events = [parsed]; // Direct event object
-      } else {
-        events = [];
-        isValidJson = false; // Not a valid event JSON
-      }
-    } catch (e) {
-      isValidJson = false;
-    }
-    // Handle both auto-detection and forced general events
-    if (options && (options.isCourse === false || options.isCourse === 'auto')) {
-      // If bot is asking for missing info, set pendingGeneralEvent
-      if (!responded && botText && /specify|provide|what is|when do you/i.test(botText)) {
-        pendingGeneralEvent = true;
-        // capture a draft title from the user message for next turn
-        const t = extractTitleFromMessage(message)
-        if (t) pendingDraft.title = t
-      } else {
-        pendingGeneralEvent = false;
-        pendingDraft.title = null;
-      }
-      
-      // Check if AI returned course information (not a general event)
-      if (options.isCourse === 'auto') {
-        try {
-          const courseCheck = JSON.parse(cleanText);
-          if (courseCheck.course || courseCheck.schedule) {
-            // This is course-related JSON - handle as course
-            const courses = await loadCourses();
-            const courseName = courseCheck.course || '';
-            
-            // Find matching course by name or short name
-            const matchedCourse = courses.find(c => 
-              courseName.toLowerCase().includes(c.course.toLowerCase()) ||
-              courseName.toLowerCase().includes(c.short_name.toLowerCase()) ||
-              c.course.toLowerCase().includes(courseName.toLowerCase()) ||
-              c.short_name.toLowerCase().includes(courseName.toLowerCase())
-            );
-            
-            if (matchedCourse) {
-              // Check if course needs group selection
-              let needsGroup = false;
-              let groupNames = [];
-              if (matchedCourse.lecture && typeof matchedCourse.lecture === 'object' && !Array.isArray(matchedCourse.lecture)) {
-                needsGroup = true;
-                groupNames = Object.keys(matchedCourse.lecture);
-              }
-              if (matchedCourse.exercise && typeof matchedCourse.exercise === 'object' && !Array.isArray(matchedCourse.exercise)) {
-                needsGroup = true;
-                Object.keys(matchedCourse.exercise).forEach(g => {
-                  if (!groupNames.includes(g)) groupNames.push(g);
-                });
-              }
-              
-              if (needsGroup && groupNames.length > 0) {
-                pendingCourse = matchedCourse;
-                appendMessage('bot', `Which group are you in for ${matchedCourse.short_name}? ${groupNames.join(' or ')}?`);
-                return;
-              } else {
-                // Add course directly
-                await addCourseToCalendar(matchedCourse, null, calendar);
-                appendMessage('bot', `${randomAck()} — added ${matchedCourse.short_name} schedule.`);
-                return;
-              }
-            } else {
-              // Course not found in our database
-              appendMessage('bot', `I couldn't find the course "${courseName}" in our database. Could you try with the full course name or short name?`);
-              return;
-            }
-          }
-        } catch (e) {
-          // Not course JSON, continue with general event processing
-        }
-      }
-      
-      // For general events, just add them directly - trust AI's course detection from system prompt
-      // The AI system prompt is responsible for determining if user input is course-related or not
-      
-      if (events && events.length) {
-        // Process each event asynchronously
-        for (const ev of events) {
-          const startRaw = ev.start || ev["start date"] || ev.start_date;
-          const endRaw = ev.end || ev["end date"] || ev.end_date;
-          if (ev.title && startRaw) {
-            try {
-              const startDate = parseLocalDateTime(startRaw);
-              if (!startDate) throw new Error('Invalid start date');
-              let endDate = null;
-              if (endRaw) {
-                const tmp = parseLocalDateTime(endRaw);
-                endDate = tmp || null;
-              }
-              if (!endDate) {
-                endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
-              }
-              const startISO = startDate.toISOString();
-              const endISO = endDate.toISOString();
-
-              const eventData = {
-                title: ev.title,
-                start: startISO,
-                end: endISO,
-                allDay: false,
-                backgroundColor: '#6f42c1',
-                description: ev.description || ''
-              };
-              const savedEvent = await window.authSystem.createEvent(eventData);
-              rememberActivity('general', savedEvent.title, new Date(savedEvent.start_date), new Date(savedEvent.end_date))
-              // persist updated memory summary
-              try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-              calendar.addEvent({
-                id: savedEvent.id,
-                title: savedEvent.title,
-                start: savedEvent.start_date,
-                end: savedEvent.end_date,
-                allDay: savedEvent.all_day,
-                backgroundColor: savedEvent.color,
-                extendedProps: {
-                  description: savedEvent.description
-                }
-              });
-            } catch (error) {
-              console.error('Error saving event:', error);
-              // Fallback to local calendar only
-              try {
-                const startDate = parseLocalDateTime(startRaw) || new Date();
-                let endDate = endRaw ? (parseLocalDateTime(endRaw) || new Date(startDate.getTime() + 60 * 60 * 1000)) : new Date(startDate.getTime() + 60 * 60 * 1000);
-                calendar.addEvent({
-                  title: ev.title,
-                  start: startDate,
-                  end: endDate,
-                  description: ev.description,
-                  backgroundColor: '#6f42c1',
-                  borderColor: '#5a2d91',
-                  textColor: '#ffffff'
-                });
-              } catch (_) {
-                // As a last resort, add with raw values
-                calendar.addEvent({
-                  title: ev.title,
-                  start: startRaw,
-                  end: endRaw,
-                  description: ev.description,
-                  backgroundColor: '#6f42c1',
-                  borderColor: '#5a2d91',
-                  textColor: '#ffffff'
-                });
-              }
-            }
-          }
-        }
-        appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
-        responded = true;
-        pendingGeneralEvent = false;
-      }
-      if (!responded) {
-        // Debug information
-        console.log('API Response Debug:', {
-          botText: botText,
-          cleanText: cleanText,
-          apiKey: apiKey ? 'Present' : 'Missing',
-          data: data
-        });
-        
-        // Check if response contains JSON that should be processed
-        if (botText.trim().includes('{') && botText.trim().includes('}')) {
-          try {
-            // Try to extract and parse JSON from the response
-            const jsonMatch = botText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
-            if (jsonMatch) {
-              const jsonStr = jsonMatch[0];
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.course || parsed.title || parsed.schedule) {
-                // Don't show raw JSON, show a user-friendly message
-                appendMessage('bot', 'I found some schedule information. Let me check if I can add it to your calendar.');
-                return;
-              }
-            }
-          } catch (e) {
-            // If JSON parsing fails, treat as regular text
-          }
-        }
-        
-        if (botText.trim()) {
-          // Filter out raw JSON responses
-          const cleanResponse = botText.trim();
-          if (!cleanResponse.startsWith('{') && !cleanResponse.includes('"course"') && !cleanResponse.includes('"schedule"')) {
-            appendMessage('bot', cleanResponse);
-          } else {
-            appendMessage('bot', 'I understand you want to add something to your calendar. Could you provide more details about the event, like the name, date, and time?');
-          }
-        } else {
-          appendMessage('bot', 'I need more information to add your activity. Could you specify the name, date, or time?');
-        }
-      }
-      return;
-    }
-    // Otherwise, fallback to old logic (for course-related AI fallback)
-    if (events && events.length) {
-      events.forEach(ev => {
-        const start = ev.start || ev["start date"] || ev.start_date;
-        const end = ev.end || ev["end date"] || ev.end_date;
-        if (ev.title && start) {
-          calendar.addEvent({
-            title: ev.title,
-            start: start,
-            end: end,
-            description: ev.description,
-            backgroundColor: '#6f42c1', // Purple for general activities
-            borderColor: '#5a2d91',
-            textColor: '#ffffff'
-          });
-        }
-      });
-      appendMessage('bot', `${randomAck()} — added ${events.length} event(s) to your calendar.`);
-      responded = true;
-    }
-    if (!responded) {
-      // Check if response contains JSON that should be processed
-      if (botText.trim().includes('{') && botText.trim().includes('}')) {
-        try {
-          // Try to extract and parse JSON from the response
-          const jsonMatch = botText.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
-          if (jsonMatch) {
-            const jsonStr = jsonMatch[0];
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.course || parsed.title || parsed.schedule) {
-              // Don't show raw JSON, show a user-friendly message
-              appendMessage('bot', 'I found some schedule information. Let me process that for you.');
-              return;
-            }
-          }
-        } catch (e) {
-          // If JSON parsing fails, treat as regular text
-        }
-      }
-      
-      if (botText.trim()) {
-        // Filter out raw JSON responses
-        const cleanResponse = botText.trim();
-        if (!cleanResponse.startsWith('{') && !cleanResponse.includes('"course"') && !cleanResponse.includes('"schedule"')) {
-          appendMessage('bot', cleanResponse);
-        } else {
-          appendMessage('bot', 'I understand you want to add something to your calendar. Could you provide more details about the event?');
-        }
-      } else {
-        appendMessage('bot', 'I need more information to add your activity. Could you specify the name, date, or time?');
-      }
-    }
-  } catch (err) {
-    hideLoading();
-    console.error('ChatGPT API Error:', err);
-
-    const msg = String(err && err.message || err);
-    if (/non-JSON|Unexpected token/i.test(msg) || /404|Not Found/i.test(msg)) {
-      const base = await resolveApiBase();
-      if (!base) {
-        appendMessage('bot', '❌ The AI API endpoint is not reachable. If you are running locally, run "vercel dev" or deploy with the included vercel.json so /api is available. You can also set it via "set api https://your-app.vercel.app".');
-      } else {
-        appendMessage('bot', `❌ The AI API at ${base} is not returning JSON. Check that /api/health works and OPENAI_API_KEY is set on the server.`);
-      }
-      return;
-    }
-    if (msg.includes('401')) {
-      appendMessage('bot', '❌ API key error. Please check your OpenAI API key configuration.');
-    } else if (msg.includes('quota')) {
-      appendMessage('bot', '❌ OpenAI API quota exceeded. Please check your usage limits.');
-    } else {
-      appendMessage('bot', `❌ Error connecting to AI: ${msg}`);
-    }
-  }
-}
-
-// Utility to load courses.json
-async function loadCourses() {
-  const res = await fetch('courses.json');
-  return await res.json();
-}
-
-// Utility to add course schedule to calendar
-async function addCourseToCalendar(course, group, calendar) {
-  // helper to persist then add
-  async function saveAndAdd({ title, startDate, endDate, description, color }) {
-    try {
-      const saved = await window.authSystem.createEvent({
-        title,
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-        allDay: false,
-        backgroundColor: color,
-        description: description || ''
-      });
-      rememberActivity('course', title, startDate, endDate)
-      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-      calendar.addEvent({
-        id: saved.id,
-        title: saved.title,
-        start: saved.start_date,
-        end: saved.end_date,
-        allDay: saved.all_day,
-        backgroundColor: saved.color,
-        extendedProps: { description: saved.description }
-      });
-    } catch (e) {
-      console.error('Failed to persist course event, adding locally:', e);
-      calendar.addEvent({
-        title,
-        start: startDate,
-        end: endDate,
-        description,
-        backgroundColor: color,
-        borderColor: color,
-        textColor: '#ffffff'
-      });
-    }
-  }
-
-  // Handle lectures
-  if (course.lecture) {
-    if (typeof course.lecture === 'object' && !Array.isArray(course.lecture)) {
-      // Grouped lectures
-      if (course.lecture[group]) {
-        for (const [lecturer, day, start, end] of course.lecture[group]) {
-          const startDate = nextWeekdayDate(day, start);
-          const endDate = nextWeekdayDate(day, end);
-          await saveAndAdd({
-            title: `${course.short_name} Lecture`,
-            startDate,
-            endDate,
-            description: `Lecturer: ${lecturer}`,
-            color: '#3788d8'
-          });
-        }
-      }
-    } else {
-      // Single array
-      for (const [lecturer, day, start, end] of course.lecture) {
-        const startDate = nextWeekdayDate(day, start);
-        const endDate = nextWeekdayDate(day, end);
-        await saveAndAdd({
-          title: `${course.short_name} Lecture`,
-          startDate,
-          endDate,
-          description: `Lecturer: ${lecturer}`,
-          color: '#3788d8'
-        });
-      }
-    }
-  }
-  // Handle exercises
-  if (course.exercise) {
-    if (typeof course.exercise === 'object' && !Array.isArray(course.exercise)) {
-      // Grouped exercises
-      if (course.exercise[group]) {
-        for (const [lecturer, day, start, end] of course.exercise[group]) {
-          const startDate = nextWeekdayDate(day, start);
-          const endDate = nextWeekdayDate(day, end);
-          await saveAndAdd({
-            title: `${course.short_name} Exercise`,
-            startDate,
-            endDate,
-            description: `Lecturer: ${lecturer}`,
-            color: '#28a745'
-          });
-        }
-      }
-    } else {
-      // Single array
-      for (const [lecturer, day, start, end] of course.exercise) {
-        const startDate = nextWeekdayDate(day, start);
-        const endDate = nextWeekdayDate(day, end);
-        await saveAndAdd({
-          title: `${course.short_name} Exercise`,
-          startDate,
-          endDate,
-          description: `Lecturer: ${lecturer}`,
-          color: '#28a745'
-        });
-      }
-    }
-  }
-}
-
-// Utility to get next date for a weekday from today
-function nextWeekdayDate(weekday, time) {
-  const days = {
-    'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0
-  };
-  const today = new Date();
-  let dayNum = days[weekday];
-  let result = new Date(today);
-  result.setHours(...time.split(':').map(Number), 0, 0);
-  let diff = (dayNum - today.getDay() + 7) % 7;
-  if (diff === 0 && result < today) diff = 7;
-  result.setDate(today.getDate() + diff);
-  return result;
-}
-
-// Intercept user input for course selection
-let pendingCourse = null;
-let pendingGroup = null;
-let pendingClashEvents = null;
-let pendingClashMsg = '';
-let pendingGeneralEvent = false; // Track if waiting for general event info
-// pendingDraft is already declared at top-level; ensure it exists
-if (!pendingDraft) { pendingDraft = { title: null }; }
-// Pending confirmation for full schedule deletion
-// let pendingConfirmDeleteAll = false; // removed: no confirmations
-
-// Handle simple general event adds like: "add soccer" or "add soccer Mon 6pm-8pm"
-async function tryHandleAddGeneral(msg, calendar) {
-  const m = msg.match(/^(add|create|schedule)\s+(.+)$/i);
-  if (!m) return false;
-  const rest = m[2].trim();
-  // If looks like a course keyword, skip (course handler will take it)
-  if (/\b(course|class)\b/i.test(rest)) return false;
-
-  // Extract weekday + time if present
-  const weekday = detectWeekday(rest);
-  const tr = parseTimeRangeFlexible(rest) || parseTimeRange(rest);
-  if (weekday && tr) {
-    const startTime = toHHMM(tr.startHour, tr.startMinute);
-    const endTime = toHHMM(tr.endHour, tr.endMinute);
-    const title = extractTitleFromMessage(rest) || rest.replace(/\b(on|at|from|to|\d.*)$/i,'').trim() || 'Activity';
-    const startDate = nextWeekdayDate(weekday, startTime);
-    const endDate = nextWeekdayDate(weekday, endTime);
-    try {
-      const saved = await window.authSystem.createEvent({
-        title,
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-        allDay: false,
-        backgroundColor: '#6f42c1',
-        description: ''
-      });
-      rememberActivity('general', saved.title, new Date(saved.start_date), new Date(saved.end_date));
-      try { await window.authSystem.upsertMemory(sessionMemory) } catch {}
-      calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
-      appendMessage('bot', `${randomAck()} — added ${saved.title} on ${weekday} ${startTime}-${endTime}.`);
-      return true;
-    } catch (e) {
-      console.warn('Failed to persist general event, falling back to local add:', e);
-      calendar.addEvent({ title, start: startDate, end: endDate, backgroundColor: '#6f42c1' });
-      appendMessage('bot', `${randomAck()} — added ${title} on ${weekday} ${startTime}-${endTime}.`);
-      return true;
-    }
-  }
-  // No time yet: set pending and ask follow-up
-  pendingGeneralEvent = true;
-  pendingDraft.title = extractTitleFromMessage(rest) || rest;
-  appendMessage('bot', `What date and time for "${pendingDraft.title}"? For example: "Mon 6pm-8pm".`);
-  return true;
-}
-
-// Send button logic - robust binding
-function bindSendControls() {
-  const inputEl = document.getElementById('chat-input');
-  const btnEl = document.getElementById('send-btn');
-  if (!btnEl || !inputEl) return;
-  if (btnEl.dataset.bound === '1') return; // prevent duplicate bindings
-
-  const onSend = () => {
-    const msg = inputEl.value.trim();
-    if (!msg) return;
-    appendMessage('user', msg);
-    inputEl.value = '';
-    handleUserInput(msg, window.calendar);
-  };
-
-  btnEl.addEventListener('click', onSend);
-  inputEl.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') onSend();
-  });
-  btnEl.dataset.bound = '1';
-}
-
-// Bind send button controls on DOMContentLoaded
-document.addEventListener('DOMContentLoaded', async () => {
-  bindSendControls();
-  // refresh memory from server once logged in
-  try { await loadUserMemory(); await window.authSystem.updateMemoryFromEvents() } catch {}
-});
-
-function parseClubsInputToBlocks(input, knownClubs = []) {
-  // Parse patterns like "Soccer Tue 18:00-20:00", "Volleyball Saturday 10:00-12:00",
-  // and also flexible forms like "Mon from 6pm to 8pm" (without a club name).
- 
-  const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Tues|Wed(?:nesday)?|Thu(?:rsday)?|Thur|Thurs|Fri(?:day)?|Sat(?:urday)?)';
-  const timeRegex = '(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\s*(?:-|to)\\s*(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)';
-  const pattern = `(?:(.+?)\\s+)?${dayRegex}\\s*(?:from\\s*)?${timeRegex}`;
-  const re = new RegExp(pattern, 'ig');
-
-  const results = [];
-  let m;
-  while ((m = re.exec(input)) !== null) {
-    let name = (m[1] || '').trim();
-    const dayRaw = m[2];
-    const startRaw = m[3];
-    const endRaw = m[4];
-
-    // Normalize day
-    const dayMap = {
-      sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday',
-      thu: 'Thursday', thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday'
-    };
-    const dayKey = dayRaw.toLowerCase().slice(0, 4).replace(/\s+/g, '');
-    // handle 3 or 4 letter keys
-    const key3 = dayKey.slice(0,3);
-    const day = dayMap[dayKey] || dayMap[key3] || 'Wednesday';
-
-    const to24 = (t) => {
-      if (!t) return '18:00';
-      let s = String(t).trim().toLowerCase();
-      const ampm = s.match(/am|pm/);
-      if (ampm) {
-        s = s.replace(/\s+/g, '');
-        const parts = s.split(':');
-        let hh = parseInt(parts[0], 10);
-        let mm = parts[1] ? parseInt(parts[1], 10) : 0;
-        const p = ampm[0];
-        if (p === 'pm' && hh !== 12) hh += 12;
-        if (p === 'am' && hh === 12) hh = 0;
-        return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
-      }
-      // already 24h like 18:00
-      if (/^\d{1,2}:\d{2}$/.test(s)) return s;
-      // fallback: integer hour only
-      const hh = parseInt(s, 10);
-      if (!isNaN(hh)) return `${String(hh).padStart(2,'0')}:00`;
-      return '18:00';
-    };
-
-    results.push({ name, day, start: to24(startRaw), end: to24(endRaw) });
-  }
-
-  // If names missing, assign from knownClubs order
-  let idx = 0;
-  for (const r of results) {
-    if (!r.name && knownClubs[idx]) r.name = knownClubs[idx];
-    if (!r.name) r.name = 'Club Activity';
-    idx++;
-  }
-  return results;
-}
-
-// ---------- Scheduling utilities for the wizard ----------
-function eventsOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && aEnd > bStart;
-}
-
-function isSlotFree(calendar, start, end) {
-  try {
-    const events = calendar.getEvents();
-    for (const ev of events) {
-      const evStart = new Date(ev.start);
-      const evEnd = new Date(ev.end || ev.start);
-      if (eventsOverlap(start, end, evStart, evEnd)) return false;
-    }
-    return true;
-  } catch (e) {
-    // If calendar is unavailable, assume free to avoid hard failures
-    return true;
-  }
-}
-
-// Try to place a block on a given weekday starting at startHH (e.g., '17:00')
-// for `hours` duration. Iterate by stepMinutes until `latestEndHH`.
-function tryPlaceBlock(calendar, baseStart, weekdayName, startHH, hours, weekOffset = 0, stepMinutes = 15, latestEndHH = '21:30') {
-  const start = dateForWeekdayFrom(baseStart, weekdayName, startHH, weekOffset);
-  const latestEnd = dateForWeekdayFrom(baseStart, weekdayName, latestEndHH, weekOffset);
-  const durMs = Math.max(0.25, hours) * 60 * 60 * 1000;
-  let cur = new Date(start);
-  while (cur.getTime() + durMs <= latestEnd.getTime()) {
-    const end = new Date(cur.getTime() + durMs);
-    if (isSlotFree(calendar, cur, end)) {
-      return { start: new Date(cur), end };
-    }
-    cur = new Date(cur.getTime() + stepMinutes * 60 * 1000);
-  }
-  return null;
-}
-
-// Provide a small set of study windows based on productivity preference
-function allocateStudyBlocks(pref = 'morning') {
-  const blocks = {
-    morning: [
-      ['Monday', '09:00', '11:00'],
-      ['Tuesday', '09:00', '11:00'],
-      ['Thursday', '09:00', '11:00'],
-      ['Saturday', '10:00', '12:00']
-    ],
-    afternoon: [
-      ['Monday', '14:00', '16:00'],
-      ['Wednesday', '15:00', '17:00'],
-      ['Friday', '14:00', '16:00'],
-      ['Sunday', '13:00', '15:00']
-    ],
-    evening: [
-      ['Monday', '19:00', '21:00'],
-      ['Tuesday', '19:00', '21:00'],
-      ['Thursday', '19:00', '21:00'],
-      ['Sunday', '18:00', '20:00']
-    ]
-  };
-  return blocks[pref] || blocks.morning;
-}
-
-// Improve delete command parsing to keep the 'all' qualifier
-async function handleUserInput(msg, calendar) {
-  const lower = msg.toLowerCase().trim();
-
-  // Intercept direct course add first
-  try {
-    const handledAdd = await tryHandleAddCourse(msg, calendar);
-    if (handledAdd) return;
-  } catch (e) { /* fall through to other handlers */ }
-
-  // Intercept simple general event add
-  const handledGeneral = await tryHandleAddGeneral(msg, calendar);
-  if (handledGeneral) return;
-
-  // Intercept natural date-span daily events (e.g., onboarding from Sep 1 to Sep 10, 10am-5pm)
-  const handledRange = await tryHandleRangeEvents(msg, calendar);
-  if (handledRange) return;
-
-  // Trigger schedule generation
-  const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
-  if (genSchedule) {
-    await startScheduleWizard(calendar);
-    return;
-  }
-  if (scheduleWizard.active) {
-    const handled = await handleScheduleWizardAnswer(msg, calendar);
-    if (handled) return;
-  }
-
-  // Delete-all requests — immediate, no confirmations
-  const wantsDeleteAll = /^(?:delete|remove)\s+(?:all(?:\s+events)?|everything)\b|^(?:clear|reset)\s+(?:calendar|schedule)\b|^(?:everything)$/i.test(lower);
-  if (wantsDeleteAll) {
-    await clearAllEvents(calendar);
-    return;
-  }
-
-  // Legacy patterns for clearing — also immediate
-  if (/(^|\b)(clear|reset)\s+(calendar|schedule)\b/i.test(msg) || /^(delete|remove)\s+all(\s+events)?(\s+from\s+(my\s+)?(calendar|schedule))?\b/i.test(msg) || /^delete\s+everything/i.test(msg)) {
-    await clearAllEvents(calendar);
-    return;
-  }
-
-  // New: delete category in a time window
-  let m = msg.match(/^(delete|remove)\s+(all\s+)?(.+?)\s+((?:last|first)\s+week\s+of\s+.+|week\s+of\s+.+|in\s+.+|from\s+.+\s+to\s+.+)$/i);
-  if (m) {
-    const categoryPhrase = ((m[2] || '') + m[3]).trim();
-    const timePhrase = m[4].trim();
-    await deleteActivitiesInRange(categoryPhrase, timePhrase, calendar);
-    return;
-  }
-
-  // Fallback: send to ChatGPT for natural language processing
-  showLoading();
-  askChatGPT(msg, calendar).catch(err => {
-    hideLoading();
-    appendMessage('bot', 'Error processing your request. Please try again or rephrase your question.');
-    console.error('ChatGPT request error:', err);
-  });
-}
-
-// Implement clearAllEvents(calendar) to delete all events for the user via authSystem.deleteAllEvents and clear the calendar, then acknowledge.
-async function clearAllEvents(calendar) {
-  try {
-    // Delete from DB first
-    if (window.authSystem?.deleteAllEvents) {
-      await window.authSystem.deleteAllEvents();
-    }
-  } catch (e) {
-    console.warn('Failed to delete all events in DB:', e);
-  }
-  try {
-    // Remove from UI calendar
-    const events = calendar?.getEvents?.() || [];
-    for (const ev of events) {
-      try { ev.remove(); } catch {}
-    }
-  } catch (e) {
-    console.warn('Failed clearing calendar UI:', e);
-  }
-  appendMessage('bot', 'All your events, activities, and courses have been deleted.');
 }
