@@ -130,25 +130,144 @@ function parseTimeRangeFlexible(text) {
   return r
 }
 
-function toHHMM(hour, minute){
-  const hh = String(hour).padStart(2,'0')
-  const mm = String(minute).padStart(2,'0')
-  return `${hh}:${mm}`
+// Parse basic "HH[:MM]-HH[:MM]" with optional am/pm on either side
+function parseTimeRange(text) {
+  if (!text) return null;
+  const s = String(text).trim().toLowerCase();
+  // Accept forms like "10 am-5 pm", "10:00-17:00", "10am-17pm"
+  const m = s.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*-\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+  if (!m) return null;
+  const toHM = (part, fallbackPeriod) => {
+    let p = String(part).trim().toLowerCase();
+    const hasAM = /am/.test(p);
+    const hasPM = /pm/.test(p);
+    p = p.replace(/\s*(am|pm)/g, '').trim();
+    let [hStr, minStr] = p.split(':');
+    let h = parseInt(hStr, 10);
+    let mm = minStr ? parseInt(minStr, 10) : 0;
+    // Normalize silly inputs like 17pm => keep 17 if > 12
+    if (hasPM || (!hasAM && !hasPM && fallbackPeriod === 'pm')) {
+      if (h === 12) h = 12; else if (h <= 11) h += 12; // 1..11 => 13..23; 12pm stays 12
+      if (h > 24) h = 24; // guard
+    } else if (hasAM || (!hasAM && !hasPM && fallbackPeriod === 'am')) {
+      if (h === 12) h = 0; // 12am => 00
+    }
+    if (h > 24) h = 24;
+    if (mm > 59) mm = 59;
+    return { h, mm };
+  };
+  // If only one side has am/pm, use it as fallback for the other if 1..12
+  const leftHas = /(am|pm)/.test(m[1].toLowerCase()) ? (m[1].toLowerCase().includes('pm') ? 'pm' : 'am') : null;
+  const rightHas = /(am|pm)/.test(m[2].toLowerCase()) ? (m[2].toLowerCase().includes('pm') ? 'pm' : 'am') : null;
+  const left = toHM(m[1], leftHas || rightHas);
+  const right = toHM(m[2], rightHas || leftHas);
+  return { startHour: left.h, startMinute: left.mm, endHour: right.h, endMinute: right.mm };
 }
 
-// Friendly acknowledgements for a more human vibe
-function randomAck(prefix = '') {
-  const acks = [
-    'All set',
-    'Done',
-    'Got it',
-    'No problem',
-    'Understood',
-    'Sweet',
-    'You got it'
-  ];
-  const pick = acks[Math.floor(Math.random() * acks.length)];
-  return prefix ? `${pick} — ${prefix}` : pick;
+// Parse a variety of local datetime strings into a Date
+function parseLocalDateTime(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  // ISO
+  if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return new Date(s);
+  // "YYYY-MM-DD HH:MM"
+  const m1 = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (m1) return new Date(`${m1[1]}-${m1[2]}-${m1[3]}T${m1[4]}:${m1[5]}:00`);
+  // Month name day [year] [time]
+  if (/[a-zA-Z]{3,}\s+\d{1,2}/.test(s)) {
+    const tryDate = new Date(s);
+    if (!isNaN(tryDate)) return tryDate;
+  }
+  // Fallback to Date.parse
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+function parseMonthDay(text, baseYear = new Date().getFullYear()) {
+  if (!text) return null;
+  const months = {
+    jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11
+  };
+  const t = String(text).trim();
+  const m = t.match(/([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?/);
+  if (!m) return null;
+  const mon = months[m[1].toLowerCase()];
+  if (mon == null) return null;
+  const day = parseInt(m[2], 10);
+  const year = m[3] ? parseInt(m[3], 10) : baseYear;
+  const d = new Date(year, mon, day, 0, 0, 0, 0);
+  return isNaN(d) ? null : d;
+}
+
+function parseDateRangeFromText(text) {
+  if (!text) return null;
+  const m = text.match(/from\s+([^\n]+?)\s+to\s+([^\n]+?)(?:\b|\.|,|$)/i);
+  if (!m) return null;
+  const now = new Date();
+  const y = now.getFullYear();
+  const start = parseMonthDay(m[1], y) || parseLocalDateTime(m[1]);
+  const end = parseMonthDay(m[2], y) || parseLocalDateTime(m[2]);
+  if (!start || !end) return null;
+  // Ensure start <= end; if end < start and no explicit years, assume same month typo => swap
+  if (end < start) return null;
+  return { start, end };
+}
+
+function extractTitleForRange(text) {
+  const s = String(text||'').trim();
+  // Look for "have X from" or "schedule X from"
+  let m = s.match(/\b(?:have|schedule|add|set up)\s+(.+?)\s+from\b/i);
+  if (m && m[1]) return m[1].replace(/^my\s+/i,'').trim();
+  // Or leading noun phrase before ":" or ".":
+  m = s.match(/^(.+?)\s+from\b/i);
+  if (m && m[1]) return m[1].replace(/^(i\s+have|i\s+need|please\s+add)\s+/i,'').trim();
+  return 'Event';
+}
+
+async function tryHandleRangeEvents(msg, calendar) {
+  const dr = parseDateRangeFromText(msg);
+  if (!dr) return false;
+  // Extract time range
+  let tr = parseTimeRangeFlexible(msg);
+  if (!tr) {
+    // Try pattern "from <date> to <date> from <time> to <time>"
+    const mt = msg.match(/from\s+[^\n]+?\s+to\s+[^\n]+?\s+(?:from\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+    if (mt) tr = parseTimeRange(`${mt[1]}-${mt[2]}`);
+  }
+  if (!tr) return false;
+
+  const titleRaw = extractTitleForRange(msg) || 'Event';
+  const title = titleRaw.replace(/\b(sessions)\b/i, 'Session'); // singular per day
+
+  // Iterate from start to end inclusive
+  const startDate = new Date(dr.start);
+  const endDate = new Date(dr.end);
+  let count = 0;
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tr.startHour || 0, tr.startMinute || 0, 0, 0);
+    const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tr.endHour || (tr.startHour+1) || 1, tr.endMinute || 0, 0, 0);
+    // Guard invalid reversed times per-day
+    if (e <= s) continue;
+    try {
+      const saved = await window.authSystem.createEvent({
+        title: titleRaw, // keep original phrase, can be plural
+        start: s.toISOString(),
+        end: e.toISOString(),
+        allDay: false,
+        backgroundColor: '#6f42c1',
+        description: ''
+      });
+      calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color, extendedProps: { description: saved.description } });
+      count++;
+    } catch (e1) {
+      // Fallback: local add
+      calendar.addEvent({ title: titleRaw, start: s, end: e, backgroundColor: '#6f42c1' });
+      count++;
+    }
+  }
+  if (count > 0) appendMessage('bot', `${randomAck()} — added ${count} day(s) of ${titleRaw}.`);
+  else appendMessage('bot', 'Couldn\'t place those events — please check the dates/times.');
+  return true;
 }
 
 // ---------- Schedule Generation Wizard ----------
@@ -1365,6 +1484,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function parseClubsInputToBlocks(input, knownClubs = []) {
   // Parse patterns like "Soccer Tue 18:00-20:00", "Volleyball Saturday 10:00-12:00",
   // and also flexible forms like "Mon from 6pm to 8pm" (without a club name).
+ 
   const dayRegex = '(Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Tues|Wed(?:nesday)?|Thu(?:rsday)?|Thur|Thurs|Fri(?:day)?|Sat(?:urday)?)';
   const timeRegex = '(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\s*(?:-|to)\\s*(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)';
   const pattern = `(?:(.+?)\\s+)?${dayRegex}\\s*(?:from\\s*)?${timeRegex}`;
@@ -1514,6 +1634,10 @@ async function handleUserInput(msg, calendar) {
   // Intercept simple general event add
   const handledGeneral = await tryHandleAddGeneral(msg, calendar);
   if (handledGeneral) return;
+
+  // Intercept natural date-span daily events (e.g., onboarding from Sep 1 to Sep 10, 10am-5pm)
+  const handledRange = await tryHandleRangeEvents(msg, calendar);
+  if (handledRange) return;
 
   // Trigger schedule generation
   const genSchedule = /(generate|build|create|make)\s+.*(schedule|timetable|plan)/i.test(lower) || /^schedule\s*please$/i.test(lower);
