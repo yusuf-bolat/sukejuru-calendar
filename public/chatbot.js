@@ -1121,121 +1121,147 @@ async function clearAllEvents(calendar) {
   }
 }
 
-// Minimal safe fetch wrapper for OpenAI proxy
-async function safeFetchJSON(url, payload) {
-  try {
-    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const ct = resp.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) throw new Error('Non-JSON response');
-    return await resp.json();
-  } catch (e) { return null; }
-}
+// Natural date range parsing helpers (restore previous capability)
+const monthNameToIndex = {
+  january:0,february:1,march:2,april:3,may:4,june:5,july:6,august:7,september:8,october:9,november:10,december:11,
+  jan:0,feb:1,mar:2,apr:3,may_s:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11
+};
 
-async function askChatGPT(messages) {
-  const data = await safeFetchJSON('/api/openai-edge', { messages });
-  if (!data || !data.choices || !data.choices.length) return null;
-  return data.choices[0].message?.content || null;
-}
-
-// Parse a single time like "at 3pm" or "3:30"; returns HH:MM or null
-function parseSingleTime(text) {
-  if (!text) return null;
-  const m = String(text).toLowerCase().match(/(?:\bat\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  let mm = parseInt(m[2] || '00', 10);
-  const ap = m[3];
-  if (ap) {
-    if (ap === 'pm' && hh < 12) hh += 12;
-    if (ap === 'am' && hh === 12) hh = 0;
-  }
-  return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
-}
-
-function nextHourRange(base = new Date(), durHours = 1) {
-  const start = new Date(base);
-  start.setMinutes(0,0,0);
-  start.setHours(start.getHours() + (base.getMinutes() > 0 ? 1 : 0));
-  const end = new Date(start.getTime() + durHours * 3600000);
+function firstWeekOfMonth(year, monthIdx) {
+  const d = new Date(year, monthIdx, 1);
+  const dow = d.getDay();
+  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
+  d.setDate(d.getDate() + diffToMonday);
+  const start = new Date(d); start.setHours(0,0,0,0);
+  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
   return { start, end };
 }
 
-async function addGeneralEventFromText(text, calendar) {
-  try {
-    const t = String(text || '').trim();
-    // Title extraction
-    let title = null;
-    // Prefer explicit "add <title>" format
-    const addMatch = t.match(/^add\s+(.+)$/i);
-    if (addMatch) {
-      title = addMatch[1].trim();
-    } else {
-      title = extractTitleFromMessage(t);
-    }
-    if (!title) return false;
+function lastWeekOfMonth(year, monthIdx) {
+  const lastDay = new Date(year, monthIdx + 1, 0); // last day of month
+  const dow = lastDay.getDay();
+  const lastMonday = new Date(lastDay);
+  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
+  lastMonday.setDate(lastMonday.getDate() + diffToMonday);
+  const start = new Date(lastMonday); start.setHours(0,0,0,0);
+  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
+  return { start, end };
+}
 
-    // If title matches a known course, add its scheduled meetings for 2 weeks
-    try {
-      const norm = (s)=> String(s||'').trim().toLowerCase();
-      const list = Array.isArray(window.coursesList) ? window.coursesList : [];
-      const want = norm(title);
-      const course = list.find(c => (
-        norm(c.short_name) === want ||
-        want === norm(c.course) ||
-        want.includes(norm(c.short_name)) ||
-        norm(c.course).includes(want)
-      ));
-      if (course) {
-        // Choose a base week: nearest semester start if available, else current week
-        const sem = getNearestSemester() || { start: new Date() };
-        await addCourseWeeks(course, null, sem.start, 2, calendar);
-        appendMessage('bot', `${randomAck('added course meetings')}: ${course.short_name || course.course} for the first two weeks.`);
-        return true;
-      }
-    } catch (_) { /* fall through to generic add */ }
+function wholeMonthRange(year, monthIdx) {
+  const start = new Date(year, monthIdx, 1, 0,0,0,0);
+  const end = new Date(year, monthIdx + 1, 0, 23,59,59,999);
+  return { start, end };
+}
 
-    // Day and time parsing
-    const day = detectWeekday(t) || new Date().toLocaleDateString(undefined, { weekday: 'long' });
-    let range = parseTimeRangeFlexible(t);
-    if (!range) {
-      const at = parseSingleTime(t);
-      if (at) {
-        const s = dateForWeekdayFrom(new Date(), day, at, 0);
-        const e = new Date(s.getTime() + 60 * 60 * 1000);
-        range = { start: at, end: `${String((s.getHours()+1)%24).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}` };
-      }
-    }
+function parseDateFromMonthDay(text, baseYear) {
+  const m = String(text).toLowerCase().match(/(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,\s*(\d{4}))?/i);
+  if (!m) return null;
+  const monthName = m[1].toLowerCase();
+  const monthIdx = monthNameToIndex[monthName.replace(/\s+/g,'_')];
+  const day = parseInt(m[2], 10);
+  const year = m[3] ? parseInt(m[3], 10) : baseYear;
+  if (monthIdx == null || !day || !year) return null;
+  return new Date(year, monthIdx, day, 0,0,0,0);
+}
 
-    let start, end;
-    if (range) {
-      start = dateForWeekdayFrom(new Date(), day, range.start, 0);
-      end = dateForWeekdayFrom(new Date(), day, range.end, 0);
-      // If end wraps before start, add a day
-      if (end <= start) end = new Date(start.getTime() + 60 * 60 * 1000);
-    } else {
-      // Default to next rounded hour today
-      const r = nextHourRange(new Date(), 1);
-      start = r.start; end = r.end;
-    }
+function parseDateRangeNatural(text, baseAnchor = new Date()) {
+  const t = String(text || '').toLowerCase();
+  const year = baseAnchor.getFullYear();
 
-    // Save via authSystem if available, else local
-    try {
-      if (window.authSystem?.createEvent) {
-        const saved = await window.authSystem.createEvent({ title, start: start.toISOString(), end: end.toISOString(), allDay: false, backgroundColor: '#6f42c1', description: '' });
-        calendar.addEvent({ id: saved.id, title: saved.title, start: saved.start_date, end: saved.end_date, allDay: saved.all_day, backgroundColor: saved.color });
-      } else {
-        calendar.addEvent({ title, start, end, backgroundColor: '#6f42c1', borderColor: '#6f42c1', textColor: '#fff' });
-      }
-    } catch (e) {
-      // Fallback to local add on any failure
-      calendar.addEvent({ title, start, end, backgroundColor: '#6f42c1', borderColor: '#6f42c1', textColor: '#fff' });
-    }
-
-    appendMessage('bot', `${randomAck('added')}: ${title} on ${start.toLocaleDateString()} ${start.toTimeString().slice(0,5)}–${end.toTimeString().slice(0,5)}`);
-    return true;
-  } catch (e) {
-    return false;
+  // explicit from X to Y
+  const between = t.match(/from\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)\s+(?:to|\-)\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)/i);
+  if (between) {
+    const s = parseDateFromMonthDay(between[1], year);
+    const e = parseDateFromMonthDay(between[2], year);
+    if (s && e) { const end = new Date(e); end.setHours(23,59,59,999); return { start: s, end }; }
   }
+
+  // week of <month day>
+  const weekOf = t.match(/week\s+of\s+([a-z]{3,}\s+\d{1,2}(?:,\s*\d{4})?)/i);
+  if (weekOf) {
+    const on = parseDateFromMonthDay(weekOf[1], year);
+    if (on) {
+      const dow = on.getDay();
+      const monday = new Date(on);
+      const diffToMonday = (dow === 0 ? -6 : 1 - dow);
+      monday.setDate(monday.getDate() + diffToMonday);
+      const start = new Date(monday); start.setHours(0,0,0,0);
+      const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
+      return { start, end };
+    }
+  }
+
+  // first/last week of <month>
+  const fl = t.match(/(first|last)\s+week\s+of\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)/i);
+  if (fl) {
+    const which = fl[1].toLowerCase();
+    const mname = fl[2].toLowerCase();
+    const midx = monthNameToIndex[mname.replace(/\s+/g,'_')];
+    if (midx != null) {
+      return which === 'first' ? firstWeekOfMonth(year, midx) : lastWeekOfMonth(year, midx);
+    }
+  }
+
+  // whole month like "September"
+  const monthOnly = t.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i);
+  if (monthOnly) {
+    const midx = monthNameToIndex[monthOnly[1].toLowerCase()];
+    if (midx != null) return wholeMonthRange(year, midx);
+  }
+
+  // Fallback: current week
+  const dow = baseAnchor.getDay();
+  const monday = new Date(baseAnchor);
+  const diffToMonday = (dow === 0 ? -6 : 1 - dow);
+  monday.setDate(monday.getDate() + diffToMonday);
+  const start = new Date(monday); start.setHours(0,0,0,0);
+  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
+  return { start, end };
+}
+
+function determineCategoriesFromPhrase(text) {
+  const s = String(text||'').toLowerCase();
+  const cats = new Set();
+  if (/club|society|practice|team/.test(s)) cats.add('club');
+  if (/study|revision|reading/.test(s)) cats.add('study');
+  if (/job|work|shift|baito/.test(s)) cats.add('job');
+  if (/project|research|thesis|capstone/.test(s)) cats.add('project');
+  if (/course|class|lecture|exercise|lab|tutorial|seminar/.test(s)) cats.add('course');
+  if (/commute/.test(s)) cats.add('commute');
+  if (/all\s+events|everything/.test(s)) cats.add('all');
+  if (!cats.size) cats.add('all');
+  return Array.from(cats);
+}
+
+function eventMatchesCategories(ev, categories) {
+  const title = (ev.title || '').toLowerCase();
+  const checks = {
+    club: /(club|soccer|basketball|volley|tennis|band|music|activity)/,
+    study: /(study\s*session|study|revision|reading)/,
+    job: /(part-?time\s*job|job|work|shift|baito)/,
+    project: /(project\s*work|project|research|thesis|capstone)/,
+    course: /(lecture|exercise|seminar|tutorial|lab|[A-Z]{2,}\d{2,})/,
+    commute: /(commute\s*(to|home)?)/,
+    all: /.*/
+  };
+  return categories.some(cat => (checks[cat] || /.*/).test(title));
+}
+
+async function deleteActivitiesInRange(categoryPhrase, timePhrase, calendar) {
+  const base = (scheduleWizard?.data?.baseSemester?.start) || new Date();
+  const { start, end } = parseDateRangeNatural(timePhrase || '', base);
+  const cats = determineCategoriesFromPhrase(categoryPhrase || '');
+  const evs = calendar.getEvents().filter(ev => {
+    const s = new Date(ev.start);
+    return s >= start && s <= end && eventMatchesCategories(ev, cats);
+  });
+  let count = 0;
+  for (const ev of evs) {
+    try { if (ev.id && window.authSystem?.deleteEvent) await window.authSystem.deleteEvent(ev.id); } catch {}
+    ev.remove(); count++;
+  }
+  appendMessage('bot', `${randomAck('deleted')}: ${count} event(s) ${cats.includes('all') ? '' : `in ${cats.join(', ')}`} for ${start.toLocaleDateString()}–${end.toLocaleDateString()}`.trim());
 }
 
 // Handle user input at the top level
@@ -1251,10 +1277,16 @@ async function handleUserInput(msg, calendar) {
   }
 
   // Commands
-  if (/^clear\s+all\s+events$/i.test(text)) { await clearAllEvents(calendar); return; }
+  if (/^(clear|delete)\s+all\s+events$/i.test(text)) { await clearAllEvents(calendar); return; }
   if (/^(start|generate|make).*(plan|schedule)/i.test(text) || /schedule\s+wizard/i.test(text)) {
     appendMessage('bot', 'Awesome — I\'ll help you plan. I\'ll ask a few quick questions.');
     await startScheduleWizard(calendar);
+    return;
+  }
+
+  // Natural delete within a time range/category
+  if (/^(delete|remove)\b/i.test(text)) {
+    await deleteActivitiesInRange(text, text, calendar);
     return;
   }
 
