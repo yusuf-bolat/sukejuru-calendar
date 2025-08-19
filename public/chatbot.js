@@ -1240,3 +1240,54 @@ async function askChatGPT(message, calendar, options = {}) {
     else appendMessage('bot', `❌ The AI API at ${base} is not returning JSON.`);
   }
 }
+
+// Safe JSON fetch: throws with readable text when response isn't JSON
+async function safeFetchJSON(input, init) {
+  const res = await fetch(input, init);
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) {
+    if (ct.includes('application/json')) {
+      let err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`API Error ${res.status}: ${typeof err === 'string' ? err : (err.error || JSON.stringify(err)).slice(0,200)}`);
+    } else {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`API Error ${res.status}: ${txt.slice(0,200)}`);
+    }
+  }
+  if (!ct.includes('application/json')) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Server returned non-JSON: ${txt.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+// Resolve API base URL for /api calls. Supports:
+// 1) Same-origin (when served via a server)
+// 2) Global window.API_BASE
+// 3) localStorage apiBase
+let __apiBasePromise;
+async function resolveApiBase() {
+  if (__apiBasePromise) return __apiBasePromise;
+  __apiBasePromise = (async () => {
+    // 1) Same-origin health check (works in vercel dev/deploy)
+    try {
+      if (location.protocol.startsWith('http')) {
+        if (await pingJSON('/api/health')) return '';
+      }
+    } catch {}
+    // 2) window.API_BASE (set in index.html or elsewhere)
+    const globalBase = (typeof window !== 'undefined' && window.API_BASE) ? String(window.API_BASE).replace(/\/$/,'') : '';
+    if (globalBase) {
+      if (await pingJSON(`${globalBase}/api/health`)) return globalBase;
+    }
+    // 3) localStorage
+    try {
+      const storedRaw = localStorage.getItem('apiBase') || '';
+      const stored = storedRaw.replace(/\/$/,'');
+      if (stored && await pingJSON(`${stored}/api/health`)) return stored;
+    } catch {}
+    // No prompt fallback; just return empty to stay non-blocking
+    return '';
+  })();
+  return __apiBasePromise;
+}
