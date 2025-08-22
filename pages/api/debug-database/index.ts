@@ -192,7 +192,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (error) {
     return res.status(500).json({
       error: 'Debug test failed',
-      details: error.toString(),
+      details: error instanceof Error ? error.message : String(error),
       results
     })
   }
