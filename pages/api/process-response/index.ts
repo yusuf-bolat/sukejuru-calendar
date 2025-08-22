@@ -7,6 +7,65 @@ interface ProcessedResponse {
   summary: string
 }
 
+// Utility function to get the next occurrence of a specific day of the week
+function getNextOccurrenceOf(dayName: string, fromDate = new Date()): Date {
+  const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+  const targetDayIndex = daysOfWeek.indexOf(dayName.toLowerCase())
+  
+  if (targetDayIndex === -1) {
+    throw new Error(`Invalid day name: ${dayName}`)
+  }
+  
+  const today = new Date(fromDate)
+  const currentDayIndex = today.getDay()
+  
+  // Calculate days until target day
+  let daysUntilTarget = targetDayIndex - currentDayIndex
+  
+  // If target day is today or already passed this week, go to next week
+  if (daysUntilTarget <= 0) {
+    daysUntilTarget += 7
+  }
+  
+  const nextOccurrence = new Date(today)
+  nextOccurrence.setDate(today.getDate() + daysUntilTarget)
+  
+  return nextOccurrence
+}
+
+// Utility function to generate recurring events from next occurrence
+function generateRecurringEvents(title: string, dayName: string, startTime: string, endTime: string, durationMonths = 6): any[] {
+  const events = []
+  const startDate = getNextOccurrenceOf(dayName)
+  
+  // Generate events for the specified duration
+  for (let week = 0; week < (durationMonths * 4.33); week++) { // ~4.33 weeks per month
+    const eventDate = new Date(startDate)
+    eventDate.setDate(startDate.getDate() + (week * 7))
+    
+    // Parse time strings (e.g., "10:00", "12:00")
+    const [startHour, startMinute] = startTime.split(':').map(Number)
+    const [endHour, endMinute] = endTime.split(':').map(Number)
+    
+    const startDateTime = new Date(eventDate)
+    startDateTime.setHours(startHour, startMinute, 0, 0)
+    
+    const endDateTime = new Date(eventDate)
+    endDateTime.setHours(endHour, endMinute, 0, 0)
+    
+    events.push({
+      title,
+      start_date: startDateTime.toISOString(),
+      end_date: endDateTime.toISOString(),
+      all_day: false,
+      color: '#3788d8',
+      description: `Weekly recurring ${dayName} event`
+    })
+  }
+  
+  return events
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })

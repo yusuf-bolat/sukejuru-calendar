@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function ProfilePage() {
   const [session, setSession] = useState<any>(null)
@@ -94,6 +95,15 @@ export default function ProfilePage() {
       <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
+          <div className="flex justify-center items-center mb-6">
+            <Image 
+              src="/sukejuru-logo.svg" 
+              alt="sukejuru" 
+              width={200} 
+              height={60}
+              style={{ color: 'white' }}
+            />
+          </div>
           <Link 
             href="/" 
             className="inline-flex items-center text-white/80 hover:text-white mb-4 transition-colors"

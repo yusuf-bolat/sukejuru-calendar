@@ -239,7 +239,17 @@ SCHEDULE ANALYSIS RULES:
 Examples:
 - "I have part time job next 2 weeks on Thursdays from 6pm to 10pm" → CREATE the job events for the next 2 Thursdays
 - "Soccer practice on Monday 4-6pm" → CREATE the soccer practice event for next Monday
+- "I have meeting every monday from 10am to 12pm" → CREATE recurring meeting events starting from the next Monday
 - "Add Mechanics of Materials" → CREATE the course events from the database
+
+RECURRING EVENT RULES:
+- When user says "every [day]" without specifying start date, start from the NEXT occurrence of that day
+- Example: "meeting every Monday 10am-12pm" on Wednesday → first event is next Monday
+- Example: "gym every Tuesday 6pm" on Tuesday → first event is today if current time < 6pm, otherwise next Tuesday
+- Generate events for a reasonable duration (semester length for courses, 3-6 months for personal events)
+- If user specifies duration ("next 2 weeks", "for 3 months"), respect that timeframe
+
+CURRENT DATE CONTEXT: Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} (${new Date().toISOString().split('T')[0]})
 
 Available courses with exact schedule data:
 ${JSON.stringify(coursesData, null, 2)}
@@ -356,6 +366,14 @@ Response: {"action": "bulk-delete", "criteria": {"title_contains": "meeting", "d
 
 User: "add soccer practice Monday 4-6pm"
 Response: {"action": "create", "events": [{"title": "Soccer Practice", "start_date": "2025-08-25T16:00:00+09:00", "end_date": "2025-08-25T18:00:00+09:00", "all_day": false, "color": "#3788d8"}], "summary": "Added soccer practice for Monday 4-6pm"}
+
+User: "I have meeting every Monday from 10am to 12pm"
+Response: {"action": "bulk-create", "events": [
+  {"title": "Meeting", "start_date": "2025-08-25T10:00:00+09:00", "end_date": "2025-08-25T12:00:00+09:00", "all_day": false, "color": "#3788d8", "description": "Weekly recurring meeting"},
+  {"title": "Meeting", "start_date": "2025-09-01T10:00:00+09:00", "end_date": "2025-09-01T12:00:00+09:00", "all_day": false, "color": "#3788d8", "description": "Weekly recurring meeting"},
+  {"title": "Meeting", "start_date": "2025-09-08T10:00:00+09:00", "end_date": "2025-09-08T12:00:00+09:00", "all_day": false, "color": "#3788d8", "description": "Weekly recurring meeting"},
+  ... [generate events for next 3-6 months starting from next Monday occurrence] ...
+], "summary": "Added weekly Monday meetings from 10am-12pm starting from next Monday (Aug 25, 2025) for the next 6 months"}
 
 User: "add Machine Workshop Group A"
 Response: {"action": "bulk-create", "events": [

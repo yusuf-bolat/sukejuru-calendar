@@ -1,6 +1,24 @@
 @tailwind base;
-@tailwind components;
-@tailwind utilities;
+@tailwind components;.app-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  margin-bottom: 24px;
+}
+.app-title {
+  color: white;
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  justify-content: center;
+}
 
 :root {
   color-scheme: dark;
@@ -45,6 +63,7 @@ input, textarea, select {
   align-items: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   margin-bottom: 24px;
+  position: relative;
 }
 .app-title {
   color: white;
@@ -70,6 +89,27 @@ input, textarea, select {
   text-decoration: none;
 }
 .nav-btn:hover, .logout-btn:hover { background: rgba(255, 255, 255, 0.3); transform: translateY(-1px); }
+
+/* Notification Button Styles */
+.notification-enabled {
+  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+  color: white;
+  border: 1px solid rgba(76, 175, 80, 0.5);
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+.notification-enabled:hover {
+  background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+}
+.notification-disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.notification-disabled:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
 
 .main-content { padding: 0 24px; flex: 1 1 auto; }
 #main-layout { display: flex; justify-content: center; align-items: flex-start; gap: 32px; width: 100%; box-sizing: border-box; margin: 0; height: 75vh; }

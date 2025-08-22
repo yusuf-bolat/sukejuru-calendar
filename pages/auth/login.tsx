@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -24,8 +25,17 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
       <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl shadow-2xl w-full max-w-md p-8">
-        {/* Header with Icon */}
+        {/* Header with Logo and Icon */}
         <div className="text-center mb-8">
+          <div className="flex justify-center mb-6">
+            <Image 
+              src="/sukejuru-logo.svg" 
+              alt="sukejuru" 
+              width={200} 
+              height={60}
+              style={{ color: 'white' }}
+            />
+          </div>
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl mb-4">
             <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3a2 2 0 012-2h4a2 2 0 012 2v4m-6 0V6a2 2 0 012-2h4a2 2 0 012 2v1M8 7v4m8-4v4m-8 0h8m-8 0a2 2 0 01-2 2v4a2 2 0 002 2h8a2 2 0 002-2v-4a2 2 0 01-2-2" />
