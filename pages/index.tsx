@@ -128,30 +128,63 @@ class EventNotificationService {
     this.notificationTimeouts.clear()
 
     const now = new Date()
-    const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000)
-    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000)
 
     events.forEach(event => {
       if (!event.start) return
 
       const eventStart = new Date(event.start as string)
       const notificationTime = new Date(eventStart.getTime() - 10 * 60 * 1000) // 10 minutes before
+      const minutesUntilEvent = Math.round((eventStart.getTime() - now.getTime()) / (1000 * 60))
+      const eventKey = `${event.id}_${event.start}`
 
-      // Only schedule notifications for events that:
-      // 1. Haven't started yet
-      // 2. Are within the next hour
-      // 3. Notification time hasn't passed
-      if (eventStart > now && eventStart <= oneHourFromNow && notificationTime > now) {
+      // Check if event is starting in exactly 10 minutes (within 1 minute tolerance)
+      if (minutesUntilEvent >= 9 && minutesUntilEvent <= 11) {
+        // Only show notification if we haven't already notified for this event
+        if (!this.notifiedEvents.has(eventKey)) {
+          this.showNotification(event, minutesUntilEvent)
+          console.log(`🔔 Immediate notification for "${event.title}" starting in ${minutesUntilEvent} minutes`)
+        }
+      }
+      // Schedule future notifications for events that haven't started yet and notification time hasn't passed
+      else if (eventStart > now && notificationTime > now) {
         const timeoutMs = notificationTime.getTime() - now.getTime()
-        const minutesUntil = Math.round((eventStart.getTime() - now.getTime()) / (1000 * 60))
 
         const timeoutId = setTimeout(() => {
-          this.showNotification(event, minutesUntil)
+          this.showNotification(event, 10) // Will be 10 minutes before when triggered
         }, timeoutMs)
 
         this.notificationTimeouts.add(timeoutId)
 
-        console.log(`⏰ Scheduled notification for "${event.title}" in ${Math.round(timeoutMs / 1000)} seconds (${minutesUntil} min before event)`)
+        console.log(`⏰ Scheduled notification for "${event.title}" in ${Math.round(timeoutMs / 1000)} seconds (10 min before event at ${eventStart.toLocaleTimeString()})`)
+      }
+    })
+
+    // Set up a recurring check every minute to catch any events starting in 10 minutes
+    const recurringCheckId = setInterval(() => {
+      this.checkUpcomingEvents(events)
+    }, 60000) // Check every minute
+
+    this.notificationTimeouts.add(recurringCheckId as any)
+  }
+
+  private checkUpcomingEvents(events: EventInput[]) {
+    const now = new Date()
+    
+    events.forEach(event => {
+      if (!event.start) return
+
+      const eventStart = new Date(event.start as string)
+      const minutesUntilEvent = Math.round((eventStart.getTime() - now.getTime()) / (1000 * 60))
+
+      // Check if event is starting in exactly 10 minutes (within 1 minute tolerance)
+      if (minutesUntilEvent >= 9 && minutesUntilEvent <= 11) {
+        const eventKey = `${event.id}_${event.start}`
+        
+        // Only show notification if we haven't already notified for this event
+        if (!this.notifiedEvents.has(eventKey)) {
+          this.showNotification(event, minutesUntilEvent)
+          console.log(`🔔 Recurring check notification for "${event.title}" starting in ${minutesUntilEvent} minutes`)
+        }
       }
     })
   }
