@@ -554,22 +554,56 @@ export default function TodoList() {
             )}
 
             {/* Daily Assignment Sections */}
-            {Array.from({ length: daysToShow }, (_, i) => renderDaySection(i))}
+            {(() => {
+              const daysWithTasks = Array.from({ length: daysToShow }, (_, i) => {
+                const dayAssignments = getAssignmentsForDay(i)
+                // Only render day section if it has assignments
+                return dayAssignments.length > 0 ? renderDaySection(i) : null
+              }).filter(Boolean)
+
+              // Show message if no tasks in current view
+              if (daysWithTasks.length === 0) {
+                return (
+                  <div className="card" style={{ textAlign: 'center', padding: '40px', marginBottom: '24px' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎉</div>
+                    <h3 style={{ color: '#4fc3f7', marginBottom: '8px' }}>No upcoming tasks!</h3>
+                    <p style={{ color: '#aaa', margin: 0 }}>
+                      You're all caught up for the next {daysToShow} days. Great job! 🚀
+                    </p>
+                  </div>
+                )
+              }
+
+              return daysWithTasks
+            })()}
 
             {/* More/Less Button */}
-            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-              <button
-                onClick={() => setShowMoreDays(!showMoreDays)}
-                className="button-primary"
-                style={{ 
-                  padding: '12px 24px',
-                  background: '#4fc3f7',
-                  opacity: 0.8
-                }}
-              >
-                {showMoreDays ? '← Show Less' : 'Show More Days →'}
-              </button>
-            </div>
+            {(() => {
+              // Check if there are tasks beyond the current view range
+              const hasMoreTasks = showMoreDays ? false : Array.from({ length: 14 }, (_, i) => i)
+                .slice(7) // Days 7-13 (beyond initial 7 days)
+                .some(i => getAssignmentsForDay(i).length > 0)
+              
+              const hasVisibleTasks = Array.from({ length: daysToShow }, (_, i) => i)
+                .some(i => getAssignmentsForDay(i).length > 0)
+              
+              // Only show button if there are more tasks to show or we're currently showing more
+              return (hasMoreTasks || showMoreDays) && hasVisibleTasks ? (
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <button
+                    onClick={() => setShowMoreDays(!showMoreDays)}
+                    className="button-primary"
+                    style={{ 
+                      padding: '12px 24px',
+                      background: '#4fc3f7',
+                      opacity: 0.8
+                    }}
+                  >
+                    {showMoreDays ? '← Show Less' : 'Show More Days →'}
+                  </button>
+                </div>
+              ) : null
+            })()}
           </>
         ) : (
           <>
