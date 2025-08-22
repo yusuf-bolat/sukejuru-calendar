@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       results.tests[results.tests.length - 1] = {
         test: 'assignments_table_access',
         status: 'error',
-        error: err.toString()
+        error: err instanceof Error ? err.message : String(err)
       }
     }
 
@@ -107,7 +107,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       results.tests[results.tests.length - 1] = {
         test: 'assignment_insert',
         status: 'error',
-        error: err.toString()
+        error: err instanceof Error ? err.message : String(err)
       }
     }
 
@@ -136,7 +136,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       results.tests[results.tests.length - 1] = {
         test: 'events_table_access',
         status: 'error',
-        error: err.toString()
+        error: err instanceof Error ? err.message : String(err)
       }
     }
 
@@ -183,7 +183,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       results.tests[results.tests.length - 1] = {
         test: 'event_insert',
         status: 'error',
-        error: err.toString()
+        error: err instanceof Error ? err.message : String(err)
       }
     }
 
