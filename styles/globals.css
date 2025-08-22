@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #__next {
+  height: 100%;
+}
+
+body {
+  background: #181818; /* match reference page */
+  color: #f2f2f2;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Buttons */
+.button-primary {
+  @apply bg-gradient-to-r from-brand-600 to-blue-500 text-white px-4 py-2 rounded-md hover:from-brand-500 hover:to-blue-400 transition-colors duration-200;
+}
+
+.card {
+  @apply bg-neutral-900/70 border border-neutral-800 rounded-xl shadow-lg backdrop-blur;
+}
+
+input, textarea, select {
+  @apply bg-neutral-900 border border-neutral-800 rounded-md px-3 py-2 text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-600/60;
+}
+
+/* ========== Styles ported from the reference design ========== */
+.app-container {
+  min-height: 100vh;
+  background: #181818;
+  display: flex;
+  flex-direction: column;
+}
+.app-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 15px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  margin-bottom: 24px;
+}
+.app-title {
+  color: white;
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.user-info { display: flex; align-items: center; gap: 10px; }
+.user-welcome { color: white; font-size: 14px; }
+.user-name { font-weight: 600; color: #ffd700; }
+.nav-btn, .logout-btn {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.3s ease;
+  text-decoration: none;
+}
+.nav-btn:hover, .logout-btn:hover { background: rgba(255, 255, 255, 0.3); transform: translateY(-1px); }
+
+.main-content { padding: 0 24px; flex: 1 1 auto; }
+#main-layout { display: flex; justify-content: center; align-items: flex-start; gap: 32px; width: 100%; box-sizing: border-box; margin: 0; height: 75vh; }
+#calendar { flex: 0 0 70%; width: 70vw; min-width: 400px; max-width: 100%; margin-right: 0; height: 80vh; }
+#chatbot-container { flex: 0 0 30%; width: 30vw; min-width: 250px; max-width: 400px; border: 1px solid #333; border-radius: 16px; padding: 20px 18px 18px 18px; background: #222; box-shadow: 0 4px 16px rgba(0,0,0,0.18); margin-left: 0; height: 80vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-start; gap: 8px; }
+#chat-messages { flex: 1 1 auto; min-height: 120px; max-height: 50vh; overflow-y: auto; margin-bottom: 16px; background: #181818; border-radius: 8px; border: 1px solid #333; padding: 12px 10px; font-size: 15px; color: #f2f2f2; box-shadow: 0 2px 8px rgba(0,0,0,0.10); }
+.chat-user { color: #4fc3f7; font-weight: 500; margin-bottom: 4px; padding: 2px 0; }
+.chat-bot { color: #f2f2f2; font-weight: 400; margin-bottom: 8px; padding: 2px 0; }
+#chat-input { width: 100%; padding: 8px 10px; height: 38px; border-radius: 8px; border: 1px solid #333; background: #222; color: #f2f2f2; font-size: 15px; outline: none; box-sizing: border-box; transition: border 0.2s; }
+#chat-input:focus { border: 1.5px solid #4fc3f7; }
+#send-btn { padding: 10px 0; height: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.3s ease; }
+#send-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+
+/* Google Calendar buttons */
+.gcal-btn { 
+  background: rgba(255, 255, 255, 0.1); 
+  color: white; 
+  border: 1px solid rgba(255, 255, 255, 0.2); 
+  padding: 6px 12px; 
+  border-radius: 6px; 
+  cursor: pointer; 
+  font-size: 12px; 
+  transition: all 0.3s ease; 
+  margin-top: 8px;
+}
+.gcal-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.gcal-auth-section { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Footer */
+.site-footer { text-align:center; margin-top: 24px; padding: 16px 24px; color:#aaa; font-size:13px; border-top: 1px solid #333; }
+.site-footer a { color:#4fc3f7; }
+
+/* Scrollbars */
+#calendar .fc-scroller, .fc .fc-scroller, #chat-messages { scrollbar-width: thin; scrollbar-color: rgba(79,195,247,0.6) #1b1b1b; scrollbar-gutter: stable; }
+#calendar .fc-scroller::-webkit-scrollbar, .fc .fc-scroller::-webkit-scrollbar, #chat-messages::-webkit-scrollbar { width: 10px; height: 10px; }
+#calendar .fc-scroller::-webkit-scrollbar-track, .fc .fc-scroller::-webkit-scrollbar-track, #chat-messages::-webkit-scrollbar-track { background: #141414; border-radius: 10px; }
+#calendar .fc-scroller::-webkit-scrollbar-thumb, .fc .fc-scroller::-webkit-scrollbar-thumb, #chat-messages::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(79,195,247,0.7), rgba(25,118,210,0.7)); border-radius: 10px; border: 2px solid #141414; }
+#calendar .fc-scroller::-webkit-scrollbar-thumb:hover, .fc .fc-scroller::-webkit-scrollbar-thumb:hover, #chat-messages::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(79,195,247,0.9), rgba(25,118,210,0.9)); }
+
+/* FullCalendar dark theme overrides */
+.fc-theme-standard {
+  --fc-border-color: #2b2b2b;
+  --fc-page-bg-color: #181818;
+  --fc-neutral-bg-color: #1f1f1f;
+  --fc-today-bg-color: rgba(79,195,247,0.10);
+  --fc-now-indicator-color: #ff6b6b;
+}
+.fc .fc-scrollgrid, .fc .fc-scrollgrid td, .fc .fc-scrollgrid th, .fc .fc-timegrid-slot, .fc .fc-timegrid-divider { border-color: #2b2b2b; }

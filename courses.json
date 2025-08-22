@@ -1,0 +1,349 @@
+[
+  {
+    "course": "Ordinary Differential Equations",
+    "short_name": "ODE",
+    "semester": 3,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": [
+      ["Martin SERA", "Monday", "10:40", "12:10"]
+    ],
+    "exercise": [
+      ["Martin SERA", "Tuesday", "16:20", "17:50"]
+    ],
+    "assignments": [
+      {
+        "type": "weekly_homework",
+        "due_day": "Sunday",
+        "due_time": "23:59",
+        "description": "Weekly homework assignment"
+      }
+    ]
+  },
+  {
+    "course": "Mechanics of Materials",
+    "short_name": "MoM",
+    "semester": 3,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": [
+      ["MATSUMOTO Ryosuke", "Tuesday", "10:40", "12:10"]
+    ],
+    "exercise": [
+      ["MATSUMOTO Ryosuke", "Friday", "9:00", "10:30"]
+    ],
+    "assignments": [
+      {
+        "type": "weekly_homework",
+        "due_day": "Monday",
+        "due_time": "23:59",
+        "description": "Weekly homework due before Tuesday lecture"
+      }
+    ]
+  },
+  {
+    "course": "Introduction to C Programming",
+    "short_name": "C Prog",
+    "semester": 3,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": {
+      "Group A": [["Ian PIUMARTA", "Monday", "13:00", "14:30"]],
+      "Group B": [["Ian PIUMARTA", "Thursday", "13:00", "14:30"]]
+    },
+    "exercise": {
+      "Group A": [["Ian PIUMARTA", "Monday", "14:40", "16:10"]],
+      "Group B": [["Ian PIUMARTA", "Thursday", "14:40", "16:10"]]
+    },
+    "assignments": [
+      {
+        "type": "weekly_programming",
+        "due_day": "Sunday",
+        "due_time": "23:59",
+        "description": "Weekly programming assignment"
+      }
+    ]
+  },
+  {
+    "course": "Electromagnetic Theory",
+    "short_name": "EMT",
+    "semester": 3,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": [
+      ["IMAI Tadayuki", "Tuesday", "13:00", "14:30"]
+    ],
+    "exercise": [
+      ["IMAI Tadayuki", "Friday", "13:00", "14:30"]
+    ],
+    "assignments": [
+      {
+        "type": "weekly_homework",
+        "due_day": "Monday",
+        "due_time": "23:59",
+        "description": "Weekly homework due before Tuesday lecture"
+      }
+    ]
+  },
+  {
+    "course": "Exercise for Machine Shop Practice",
+    "short_name": "Machine Shop",
+    "semester": 3,
+    "level": "core",
+    "lecture_credits": 0,
+    "exercise_credits": 1,
+    "lecture": [],
+    "exercise": {
+      "Group A": [
+        ["MATOBA Hirotsugu", "Thursday", "13:00", "14:30"],
+        ["MATOBA Hirotsugu", "Thursday", "14:40", "16:10"],
+        ["MATOBA Hirotsugu", "Thursday", "16:20", "17:50"]
+      ],
+      "Group B": [
+        ["MATOBA Hirotsugu", "Monday", "13:00", "14:30"],
+        ["MATOBA Hirotsugu", "Monday", "14:40", "16:10"],
+        ["MATOBA Hirotsugu", "Monday", "16:20", "17:50"]
+      ]
+    },
+    "assignments": [
+      {
+        "type": "weekly_report",
+        "due_day": "Wednesday",
+        "due_time": "23:59",
+        "description": "Weekly practice report (Group A: due Wednesday before Thursday session, Group B: due Sunday before Monday session)"
+      }
+    ]
+  },
+  {
+    "course": "Sports & Life Skills 4",
+    "short_name": "SLS 4",
+    "semester": 3,
+    "level": "core",
+    "lecture_credits": 1,
+    "exercise_credits": 0,
+    "lecture": [
+      ["Unknown", "Wednesday", "9:00", "10:30"]
+    ],
+    "exercise": [],
+    "assignments": [
+      {
+        "type": "monthly_reflection",
+        "due_day": "Tuesday",
+        "due_time": "23:59",
+        "description": "Monthly reflection report due before Wednesday class"
+      }
+    ]
+  },
+  {
+    "course": "Comprehensive Japanese 1",
+    "short_name": "Japanese",
+    "semester": 3,
+    "level": "core",
+    "lecture_credits": 1,
+    "exercise_credits": 0,
+    "lecture": [
+      ["Unknown", "Tuesday", "14:40", "16:10"]
+    ],
+    "exercise": [],
+    "assignments": [
+      {
+        "type": "weekly_vocabulary",
+        "due_day": "Monday",
+        "due_time": "23:59",
+        "description": "Weekly vocabulary and kanji practice due before Tuesday class"
+      }
+    ]
+  },
+  {
+    "course": "Business Japanese 1",
+    "short_name": "Biz Japanese",
+    "semester": 3,
+    "level": "core",
+    "lecture_credits": 1,
+    "exercise_credits": 0,
+    "lecture": {
+      "5th period group": [["Unknown", "Wednesday", "16:20", "17:50"]]
+    },
+    "exercise": [],
+    "assignments": [
+      {
+        "type": "weekly_business_terms",
+        "due_day": "Tuesday",
+        "due_time": "23:59",
+        "description": "Weekly business Japanese terminology assignment due before Wednesday class"
+      }
+    ]
+  },
+  {
+    "course": "Fundamentals of Electrical Motors",
+    "short_name": "Elec Motors",
+    "semester": 3,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [
+      ["Fuat KUÇUK", "Thursday", "10:40", "12:10"]
+    ],
+    "exercise": []
+  },
+  {
+    "course": "Discussions/Newspaper Reading",
+    "short_name": "Disc/News Japanese",
+    "semester": 3,
+    "level": "core",
+    "lecture_credits": 1,
+    "exercise_credits": 0,
+    "lecture": [
+      ["Unknown", "Friday", "14:40", "16:10"]
+    ],
+    "exercise": []
+  },
+  {
+    "course": "Career Design",
+    "short_name": "Career",
+    "semester": 3,
+    "level": "elective",
+    "lecture_credits": 1,
+    "exercise_credits": 0,
+    "lecture": [
+      ["Osamu TABATA", "Friday", "16:20", "17:50"]
+    ],
+    "exercise": []
+  },
+  {
+    "course": "Modern Control Engineering",
+    "short_name": "MCE",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Monday", "10:40", "12:10"]],
+    "exercise": []
+  },
+  {
+    "course": "Introduction to Scientific Measurement",
+    "short_name": "ISM",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Tuesday", "10:40", "12:10"]],
+    "exercise": []
+  },
+  {
+    "course": "Fourier Analysis and Partial Differential Equations",
+    "short_name": "FAPDE",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": [["Martin SERA", "Wednesday", "10:40", "12:10"]],
+    "exercise": [["Martin SERA", "Friday", "10:40", "12:10"]]
+  },
+  {
+    "course": "Introduction to Production Engineering",
+    "short_name": "IPE",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Thursday", "10:40", "12:10"]],
+    "exercise": []
+  },
+  {
+    "course": "Introduction to Electrochemistry",
+    "short_name": "Electrochem",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Nishi MASAYUKI", "Monday", "13:00", "14:30"]],
+    "exercise": []
+  },
+  {
+    "course": "Digital Signal Processing",
+    "short_name": "DSP",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 1,
+    "lecture": {
+      "Group A": [["Unknown", "Tuesday", "13:00", "14:30"]],
+      "Group B": [["Unknown", "Friday", "13:00", "14:30"]]
+    },
+    "exercise": {
+      "Group A": [["Unknown", "Tuesday", "14:40", "16:10"]],
+      "Group B": [["Unknown", "Friday", "14:40", "16:10"]]
+    },
+    "assignments": [
+      {
+        "type": "weekly_problem_set",
+        "due_day": "Monday",
+        "due_time": "23:59",
+        "description": "Weekly DSP problem set due before Tuesday class (Group A) or Thursday for Group B"
+      }
+    ]
+  },
+  {
+    "course": "Mechatronics Laboratory (Energy)",
+    "short_name": "MechLab(E)",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 0,
+    "exercise_credits": 1,
+    "lecture": [],
+    "exercise": {
+        "Group A": [["Unknown", "Friday", "13:00", "14:30"], 
+                    ["Unknown", "Friday", "14:40", "16:10"], 
+                    ["Unknown", "Friday", "16:20", "17:50"]],
+        "Group B": [["Unknown", "Tuesday", "13:00", "14:30"], 
+                    ["Unknown", "Tuesday", "14:40", "16:10"], 
+                    ["Unknown", "Tuesday", "16:20", "17:50"]]
+    }
+  },
+  {
+    "course": "Pre-Capstone Project 2",
+    "short_name": "PreCap 2",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Wednesday", "13:00", "14:30"], 
+                ["Unknown", "Wednesday", "14:40", "16:10"]],
+    "exercise": []
+  },
+  {
+    "course": "Introduction to Robotic Manipulators",
+    "short_name": "RobManip",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Thursday", "13:00", "14:30"]],
+    "exercise": []
+  },
+  {
+    "course": "Analog Electronic Circuits",
+    "short_name": "AEC",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Monday", "14:40", "16:10"]],
+    "exercise": []
+  },
+  {
+    "course": "Power Electronic Engineering",
+    "short_name": "PEE",
+    "semester": 5,
+    "level": "advanced",
+    "lecture_credits": 2,
+    "exercise_credits": 0,
+    "lecture": [["Unknown", "Thursday", "14:40", "16:10"]],
+    "exercise": []
+  }
+]
