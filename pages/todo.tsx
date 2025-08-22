@@ -308,7 +308,7 @@ export default function TodoList() {
     description: '',
     category: '',
     dueDate: '',
-    dueTime: '',
+    dueTime: '23:59',
     priority: 'medium'
   })
   const [todoNotificationService] = useState(() => TodoNotificationService.getInstance())
@@ -482,7 +482,7 @@ export default function TodoList() {
         description: '',
         category: '',
         dueDate: '',
-        dueTime: '',
+        dueTime: '23:59',
         priority: 'medium'
       })
     }
@@ -499,6 +499,7 @@ export default function TodoList() {
       description: '',
       category: '',
       dueDate: '',
+      dueTime: '23:59',
       priority: 'medium'
     })
   }
