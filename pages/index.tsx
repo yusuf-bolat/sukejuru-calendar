@@ -222,8 +222,7 @@ export default function Home() {
   const [profileName, setProfileName] = useState<string>('')
   const [events, setEvents] = useState<EventInput[]>([])
   const [loading, setLoading] = useState(true)
-  const [slotMinTime, setSlotMinTime] = useState<string>('00:00:00')
-  const [slotMaxTime, setSlotMaxTime] = useState<string>('23:59:00')
+  const [slotMinTime, setSlotMinTime] = useState<string>('08:00:00')
   const [notificationService] = useState(() => EventNotificationService.getInstance())
   const [notificationsEnabled, setNotificationsEnabled] = useState(false)
   const router = useRouter()
@@ -309,9 +308,29 @@ export default function Home() {
       const eventsList = (data||[]).map(e => ({ id: e.id, title: e.title, start: e.start_date, end: e.end_date }))
       setEvents(eventsList)
 
-      // Set calendar to show full 24-hour range (12:00 AM to 11:59 PM)
-      setSlotMinTime('00:00:00')
-      setSlotMaxTime('23:59:00')
+      // Calculate earliest event time for calendar display
+      if (eventsList.length > 0) {
+        const today = new Date().toISOString().split('T')[0]
+        const futureEvents = eventsList.filter(e => e.start >= today)
+        
+        if (futureEvents.length > 0) {
+          // Find the earliest start time among all events
+          const earliestTime = futureEvents.reduce((earliest, event) => {
+            const eventTime = new Date(event.start).getHours()
+            return Math.min(earliest, eventTime)
+          }, 24) // Start with 24 (impossible hour) to find minimum
+          
+          // Don't start earlier than 6 AM for readability
+          const startHour = Math.max(6, Math.min(earliestTime, 8))
+          setSlotMinTime(`${startHour.toString().padStart(2, '0')}:00:00`)
+        } else {
+          // No future events, default to 8 AM
+          setSlotMinTime('08:00:00')
+        }
+      } else {
+        // No events at all, default to 8 AM
+        setSlotMinTime('08:00:00')
+      }
     }
     load()
     const onReload = () => load()
@@ -455,7 +474,7 @@ export default function Home() {
               eventClick={handleEventClick}
               eventResizableFromStart={true}
               slotMinTime={slotMinTime}
-              slotMaxTime={slotMaxTime}
+              slotMaxTime="23:00:00"
             />
           </div>
           <ChatPanel />
