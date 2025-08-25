@@ -251,6 +251,18 @@ RECURRING EVENT RULES:
 
 CURRENT DATE CONTEXT: Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} (${new Date().toISOString().split('T')[0]})
 
+DATE RANGE PROCESSING RULES:
+- When user specifies both date range AND day of week (e.g., "Tuesdays from Aug 30 to Sep 21"), create events on ONLY the specified day within that range
+- Parse date formats like "August 30th", "Sep 21st", "30th August", "21st September"  
+- CRITICAL: "August 30th to September 21st on Tuesdays" = events ONLY on Tuesdays (not Saturdays) from August 30 to September 21
+- For part-time jobs with specific date ranges: generate individual events for each occurrence within the range
+- Example: "part time job from August 30th to September 21st on Tuesdays from 3pm to 5pm" should create:
+  - September 3, 2025 (Tuesday) 15:00-17:00
+  - September 10, 2025 (Tuesday) 15:00-17:00  
+  - September 17, 2025 (Tuesday) 15:00-17:00
+  - (Only Tuesdays that fall between Aug 30 and Sep 21)
+- NEVER confuse days: Tuesdays ≠ Saturdays, respect the exact day specified by user
+
 Available courses with exact schedule data:
 ${JSON.stringify(coursesData, null, 2)}
 
