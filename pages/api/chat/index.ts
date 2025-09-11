@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import OpenAI from 'openai'
 import { systemPrompt } from '@/lib/prompt'
 import { supabase } from '@/lib/supabaseClient'
+import { fetchCoursesForAI } from '@/lib/courseAIData'
 import { promises as fsp } from 'fs'
 import path from 'path'
 
@@ -29,6 +30,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD format
 
   try {
+    // Fetch course data with statistics for AI counseling
+    console.log('🤖 Fetching course data for AI counseling...')
+    const courseData = await fetchCoursesForAI()
+    
+    if (courseData) {
+      console.log(`✅ Course database loaded: ${courseData.courses.length} courses available for recommendations`)
+    } else {
+      console.log('⚠️ No course data available for AI counseling')
+    }
+    
     // Read courses.json and semesters.json directly from file system
     let coursesData: any[] = []
     let semesterData: any[] = []
@@ -209,7 +220,14 @@ CURRENT ACTIVE SEMESTER: ${currentSemester?.name || 'None'}
       `\nFULL CONVERSATION HISTORY (${allChatMessages.length} total messages - for context only, use recent history for responses):\n${allChatMessages.map((msg, index) => `[${index + 1}] ${msg.created_at}: ${msg.role} - ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}`).join('\n')}\n` : 
       '\nNO PREVIOUS CONVERSATIONS FOUND.\n'
 
-    const enhancedPrompt = `${systemPrompt(appName, timezone)}
+    const enhancedPrompt = `${systemPrompt(appName, timezone, courseData || undefined)}
+
+${courseData ? `
+🎓 DATABASE CONSTRAINT REMINDER:
+You have access to EXACTLY ${courseData.courses.length} courses in the database.
+ONLY recommend courses that exist in this database. Never suggest courses outside this list.
+If a user asks for a course/topic not covered, suggest the closest available alternatives.
+` : ''}
 
 ${mvpOptimizerPrompt}
 

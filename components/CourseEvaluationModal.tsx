@@ -1,0 +1,426 @@
+import { useState } from 'react'
+import { CourseWithStats, EvaluationFormData } from '@/types/courses'
+import { Star, X, ChevronLeft, ChevronRight } from 'lucide-react'
+
+interface CourseEvaluationModalProps {
+  course: CourseWithStats
+  onSubmit: (data: EvaluationFormData) => Promise<void>
+  onClose: () => void
+}
+
+export default function CourseEvaluationModal({ course, onSubmit, onClose }: CourseEvaluationModalProps) {
+  const [currentStep, setCurrentStep] = useState(1)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [formData, setFormData] = useState<EvaluationFormData>({
+    // Course Content Questions
+    content_clarity: 0,
+    content_interest: 0,
+    materials_helpful: 0,
+    
+    // Time Commitment
+    hours_per_week: '<3h',
+    
+    // Instructor Questions
+    instructor_clarity: 0,
+    teaching_engaging: 'Somewhat',
+    grading_transparent: 'Somewhat',
+    
+    // Feedback Questions
+    received_feedback: false,
+    feedback_helpful: undefined,
+    
+    // Overall Questions
+    overall_satisfaction: 0,
+    would_recommend: false,
+    what_learned: '',
+    advice_future_students: '',
+    liked_most: '',
+    would_improve: ''
+  })
+
+  const totalSteps = 5
+
+  const handleRatingClick = (field: string, value: number) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleSelectChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleBooleanChange = (field: string, value: boolean) => {
+    setFormData(prev => ({ 
+      ...prev, 
+      [field]: value,
+      // Reset feedback_helpful if they didn't receive feedback
+      ...(field === 'received_feedback' && !value ? { feedback_helpful: undefined } : {})
+    }))
+  }
+
+  const handleTextChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  const renderStarRating = (field: string, currentValue: number, label: string) => (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-gray-200">{label}</label>
+      <div className="flex space-x-1">
+        {[1, 2, 3, 4, 5].map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => handleRatingClick(field, value)}
+            className="p-1 transition-transform hover:scale-110"
+          >
+            <Star
+              className={`w-8 h-8 ${
+                value <= currentValue
+                  ? 'text-yellow-400 fill-yellow-400'
+                  : 'text-gray-400 hover:text-yellow-300'
+              }`}
+            />
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-gray-400">
+        {currentValue === 0 ? 'Click to rate' : `Rated ${currentValue}/5 stars`}
+      </p>
+    </div>
+  )
+
+  const renderYesNoSomewhat = (field: string, currentValue: string, label: string) => (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-gray-200">{label}</label>
+      <div className="flex space-x-3">
+        {['Yes', 'Somewhat', 'No'].map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => handleSelectChange(field, option)}
+            className={`px-4 py-2 rounded-lg border transition-colors ${
+              currentValue === option
+                ? 'bg-blue-600 border-blue-500 text-white'
+                : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  const renderHoursSelection = () => (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-gray-200">
+        On average, how many hours per week did you spend on this course?
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        {['<3h', '3-5h', '5-10h', '>10h'].map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => handleSelectChange('hours_per_week', option)}
+            className={`px-4 py-3 rounded-lg border transition-colors text-center ${
+              formData.hours_per_week === option
+                ? 'bg-blue-600 border-blue-500 text-white'
+                : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            {option === '<3h' && 'Less than 3 hours'}
+            {option === '3-5h' && '3-5 hours'}
+            {option === '5-10h' && '5-10 hours'}
+            {option === '>10h' && 'More than 10 hours'}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  const isStepValid = (step: number): boolean => {
+    switch (step) {
+      case 1:
+        return formData.content_clarity > 0 && formData.content_interest > 0 && formData.materials_helpful > 0
+      case 2:
+        return formData.instructor_clarity > 0
+      case 3:
+        return formData.received_feedback !== undefined && 
+               (!formData.received_feedback || (formData.received_feedback && (formData.feedback_helpful || 0) > 0))
+      case 4:
+        return formData.overall_satisfaction > 0
+      case 5:
+        return formData.would_recommend !== undefined // Recommendation is required
+      default:
+        return false
+    }
+  }
+
+  const handleSubmit = async () => {
+    if (!isStepValid(currentStep)) return
+    
+    setIsSubmitting(true)
+    try {
+      await onSubmit(formData)
+      onClose()
+    } catch (error) {
+      console.error('Error submitting evaluation:', error)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const renderStep = () => {
+    switch (currentStep) {
+      case 1:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-gray-100">Course Content</h3>
+            {renderStarRating('content_clarity', formData.content_clarity, 'Was the course content clear and well-organized?')}
+            {renderStarRating('content_interest', formData.content_interest, 'How interesting did you find the course content?')}
+            {renderStarRating('materials_helpful', formData.materials_helpful, 'Were the course materials (slides, readings, online resources) helpful?')}
+          </div>
+        )
+
+      case 2:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-gray-100">Instructor & Teaching</h3>
+            {renderStarRating('instructor_clarity', formData.instructor_clarity, 'Was the instructor\'s explanation clear?')}
+            {renderYesNoSomewhat('teaching_engaging', formData.teaching_engaging, 'Did the teaching style make the course engaging?')}
+            {renderYesNoSomewhat('grading_transparent', formData.grading_transparent, 'Was the grading system transparent?')}
+            {renderHoursSelection()}
+          </div>
+        )
+
+      case 3:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-gray-100">Assignment Feedback</h3>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-200">
+                Were there feedback on your assignments?
+              </label>
+              <div className="flex space-x-3">
+                <button
+                  type="button"
+                  onClick={() => handleBooleanChange('received_feedback', true)}
+                  className={`px-4 py-2 rounded-lg border transition-colors ${
+                    formData.received_feedback === true
+                      ? 'bg-green-600 border-green-500 text-white'
+                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBooleanChange('received_feedback', false)}
+                  className={`px-4 py-2 rounded-lg border transition-colors ${
+                    formData.received_feedback === false
+                      ? 'bg-red-600 border-red-500 text-white'
+                      : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+
+            {formData.received_feedback && (
+              <div className="pt-4">
+                {renderStarRating('feedback_helpful', formData.feedback_helpful || 0, 'Was feedback on assignments helpful for improvement?')}
+              </div>
+            )}
+          </div>
+        )
+
+      case 4:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-gray-100">Overall Satisfaction</h3>
+            {renderStarRating('overall_satisfaction', formData.overall_satisfaction, 'Overall, how satisfied were you with this course?')}
+          </div>
+        )
+
+      case 5:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-gray-100">Additional Questions</h3>
+            <div className="space-y-4">
+              {/* Recommendation Question */}
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-3">
+                  Would you recommend this course to other students? *
+                </label>
+                <div className="flex space-x-4">
+                  <button
+                    type="button"
+                    onClick={() => handleBooleanChange('would_recommend', true)}
+                    className={`px-6 py-3 rounded-lg border transition-colors ${
+                      formData.would_recommend === true
+                        ? 'bg-green-600 border-green-500 text-white'
+                        : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBooleanChange('would_recommend', false)}
+                    className={`px-6 py-3 rounded-lg border transition-colors ${
+                      formData.would_recommend === false
+                        ? 'bg-red-600 border-red-500 text-white'
+                        : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+
+              {/* What did you learn */}
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2">
+                  What did you learn from this course? (Optional)
+                </label>
+                <textarea
+                  value={formData.what_learned || ''}
+                  onChange={(e) => handleTextChange('what_learned', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-400 focus:border-blue-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="Describe the key concepts, skills, or insights you gained..."
+                />
+              </div>
+
+              {/* Advice to future students */}
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2">
+                  What advice would you give to future students to ace this course? (Optional)
+                </label>
+                <textarea
+                  value={formData.advice_future_students || ''}
+                  onChange={(e) => handleTextChange('advice_future_students', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-400 focus:border-blue-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="Share tips, study strategies, or preparation advice..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2">
+                  What did you like most about the course? (Optional)
+                </label>
+                <textarea
+                  value={formData.liked_most || ''}
+                  onChange={(e) => handleTextChange('liked_most', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-400 focus:border-blue-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="What aspects did you enjoy or find valuable?"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2">
+                  What would you improve about the course? (Optional)
+                </label>
+                <textarea
+                  value={formData.would_improve || ''}
+                  onChange={(e) => handleTextChange('would_improve', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-400 focus:border-blue-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="What suggestions do you have for improvement?"
+                />
+              </div>
+            </div>
+          </div>
+        )
+
+      default:
+        return null
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 backdrop-blur-sm">
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-gray-700">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-100">
+                Evaluate {course.short_name}
+              </h2>
+              <p className="text-sm text-gray-400 mt-1">{course.course}</p>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="px-6 py-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-gray-400">Step {currentStep} of {totalSteps}</span>
+              <span className="text-sm text-gray-400">{Math.round((currentStep / totalSteps) * 100)}% Complete</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${(currentStep / totalSteps) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="px-6 py-4">
+            {renderStep()}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between p-6 border-t border-gray-700">
+            <button
+              onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+              disabled={currentStep === 1}
+              className="flex items-center px-4 py-2 text-gray-400 hover:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              Previous
+            </button>
+
+            <div className="flex space-x-2">
+              {Array.from({ length: totalSteps }, (_, i) => (
+                <div
+                  key={i}
+                  className={`w-2 h-2 rounded-full ${
+                    i + 1 <= currentStep ? 'bg-blue-500' : 'bg-gray-600'
+                  }`}
+                />
+              ))}
+            </div>
+
+            {currentStep < totalSteps ? (
+              <button
+                onClick={() => setCurrentStep(prev => prev + 1)}
+                disabled={!isStepValid(currentStep)}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting || !isStepValid(currentStep)}
+                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSubmitting ? 'Submitting...' : 'Submit Evaluation'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -45,3 +45,6 @@ jspm_packages/
 # Build outputs
 build/
 dist/
+
+# Mobile app directory
+mobile-app/

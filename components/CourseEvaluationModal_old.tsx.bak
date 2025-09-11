@@ -1,0 +1,332 @@
+import { useState } from 'react'
+import { CourseWithStats, EvaluationFormData } from '@/types/courses'
+import { X, Star } from 'lucide-react'
+
+interface CourseEvaluationModalProps {
+  course: CourseWithStats
+  onSubmit: (formData: EvaluationFormData) => void
+  onClose: () => void
+}
+
+export default function CourseEvaluationModal({ course, onSubmit, onClose }: CourseEvaluationModalProps) {
+  const [formData, setFormData] = useState<EvaluationFormData>({
+    course_difficulty: 0,
+    course_workload: 0,
+    homework_difficulty: 0,
+    course_usefulness: 0,
+    professor_rating: 0,
+    exam_difficulty: 0,
+    hours_per_week: 0,
+    exam_prep_time: 0,
+    would_recommend: false,
+    general_feedback: '',
+    advice_to_students: ''
+  })
+
+  const [currentStep, setCurrentStep] = useState(0)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const steps = [
+    {
+      title: "Course Rating",
+      questions: [
+        {
+          key: 'course_difficulty' as keyof EvaluationFormData,
+          label: 'How difficult was this course?',
+          description: '1 = Very Easy, 5 = Very Hard',
+          type: 'rating'
+        },
+        {
+          key: 'course_workload' as keyof EvaluationFormData,
+          label: 'How heavy was the workload?',
+          description: '1 = Very Light, 5 = Very Heavy',
+          type: 'rating'
+        },
+        {
+          key: 'homework_difficulty' as keyof EvaluationFormData,
+          label: 'How difficult were the assignments/homework?',
+          description: '1 = Very Easy, 5 = Very Hard',
+          type: 'rating'
+        }
+      ]
+    },
+    {
+      title: "Course Value",
+      questions: [
+        {
+          key: 'course_usefulness' as keyof EvaluationFormData,
+          label: 'How useful was this course?',
+          description: '1 = Not Useful, 5 = Extremely Useful',
+          type: 'rating'
+        },
+        {
+          key: 'professor_rating' as keyof EvaluationFormData,
+          label: 'How would you rate the professor?',
+          description: '1 = Poor, 5 = Excellent',
+          type: 'rating'
+        },
+        {
+          key: 'exam_difficulty' as keyof EvaluationFormData,
+          label: 'How difficult were the exams?',
+          description: '1 = Very Easy, 5 = Very Hard',
+          type: 'rating'
+        }
+      ]
+    },
+    {
+      title: "Time Commitment",
+      questions: [
+        {
+          key: 'hours_per_week' as keyof EvaluationFormData,
+          label: 'How many hours per week did you spend on this course?',
+          description: 'Include lectures, studying, assignments, etc.',
+          type: 'number'
+        },
+        {
+          key: 'exam_prep_time' as keyof EvaluationFormData,
+          label: 'How many days before exams did you start preparing?',
+          description: 'Average for midterms and finals',
+          type: 'number'
+        }
+      ]
+    },
+    {
+      title: "Recommendation & Feedback",
+      questions: [
+        {
+          key: 'would_recommend' as keyof EvaluationFormData,
+          label: 'Would you recommend this course to other students?',
+          type: 'boolean'
+        },
+        {
+          key: 'general_feedback' as keyof EvaluationFormData,
+          label: 'Any general feedback about the course? (Optional)',
+          description: 'Your thoughts, pros/cons, overall experience',
+          type: 'textarea'
+        },
+        {
+          key: 'advice_to_students' as keyof EvaluationFormData,
+          label: 'Advice for future students (Optional)',
+          description: 'Tips on how to succeed, what to expect, how to ace exams',
+          type: 'textarea'
+        }
+      ]
+    }
+  ]
+
+  const handleRatingClick = (key: keyof EvaluationFormData, value: number) => {
+    setFormData(prev => ({ ...prev, [key]: value }))
+  }
+
+  const handleInputChange = (key: keyof EvaluationFormData, value: string | number | boolean) => {
+    setFormData(prev => ({ ...prev, [key]: value }))
+  }
+
+  const renderStarRating = (key: keyof EvaluationFormData, currentValue: number) => {
+    return (
+      <div className="flex justify-center gap-2 my-4">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            onClick={() => handleRatingClick(key, star)}
+            className={`w-10 h-10 transition-all duration-200 hover:scale-110 ${
+              star <= currentValue ? 'text-yellow-400' : 'text-gray-400 hover:text-yellow-300'
+            }`}
+          >
+            <Star className={`w-full h-full ${star <= currentValue ? 'fill-current' : ''}`} />
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  const isStepValid = () => {
+    const currentStepQuestions = steps[currentStep].questions
+    return currentStepQuestions.every(question => {
+      const value = formData[question.key]
+      if (question.type === 'rating') {
+        return typeof value === 'number' && value > 0
+      }
+      if (question.type === 'number') {
+        return typeof value === 'number' && value >= 0
+      }
+      if (question.type === 'boolean') {
+        return true // boolean can be true or false, both are valid
+      }
+      return true // textarea fields are optional
+    })
+  }
+
+  const handleNext = () => {
+    if (currentStep < steps.length - 1) {
+      setCurrentStep(currentStep + 1)
+    }
+  }
+
+  const handlePrev = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+    try {
+      await onSubmit(formData)
+    } catch (error) {
+      console.error('Error submitting evaluation:', error)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-neutral-900 border border-neutral-800 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-white">Course Evaluation</h2>
+            <p className="text-gray-400 text-sm">{course.code} - {course.name}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="p-6">
+          {/* Progress Indicator */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-medium text-gray-300">{steps[currentStep].title}</span>
+              <span className="text-sm text-gray-400">
+                Step {currentStep + 1} of {steps.length}
+              </span>
+            </div>
+            <div className="w-full bg-neutral-800 rounded-full h-2">
+              <div
+                className="bg-gradient-to-r from-blue-600 to-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
+              />
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit}>
+            <div className="space-y-8">
+              {steps[currentStep].questions.map((question) => (
+                <div key={question.key} className="text-center">
+                  <h3 className="text-lg font-medium text-white mb-2">{question.label}</h3>
+                  {question.description && (
+                    <p className="text-sm text-gray-400 mb-4">{question.description}</p>
+                  )}
+
+                  {question.type === 'rating' && (
+                    renderStarRating(question.key, formData[question.key] as number)
+                  )}
+
+                  {question.type === 'number' && (
+                    <div className="max-w-xs mx-auto">
+                      <input
+                        type="number"
+                        min="0"
+                        max={question.key === 'hours_per_week' ? "168" : "365"}
+                        value={formData[question.key] as number}
+                        onChange={(e) => handleInputChange(question.key, parseInt(e.target.value) || 0)}
+                        className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-white text-center focus:outline-none focus:ring-2 focus:ring-blue-500/60"
+                      />
+                    </div>
+                  )}
+
+                  {question.type === 'boolean' && (
+                    <div className="flex justify-center gap-4">
+                      <button
+                        type="button"
+                        onClick={() => handleInputChange(question.key, true)}
+                        className={`px-6 py-2 rounded-md transition-colors ${
+                          formData[question.key]
+                            ? 'bg-green-600 text-white'
+                            : 'bg-neutral-800 text-gray-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleInputChange(question.key, false)}
+                        className={`px-6 py-2 rounded-md transition-colors ${
+                          !formData[question.key]
+                            ? 'bg-red-600 text-white'
+                            : 'bg-neutral-800 text-gray-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        No
+                      </button>
+                    </div>
+                  )}
+
+                  {question.type === 'textarea' && (
+                    <div className="max-w-2xl mx-auto">
+                      <textarea
+                        rows={4}
+                        value={formData[question.key] as string}
+                        onChange={(e) => handleInputChange(question.key, e.target.value)}
+                        className="w-full bg-neutral-800 border border-neutral-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/60 resize-none"
+                        placeholder="Share your thoughts..."
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-between items-center mt-8 pt-6 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={handlePrev}
+                disabled={currentStep === 0}
+                className={`px-6 py-2 rounded-md transition-colors ${
+                  currentStep === 0
+                    ? 'bg-neutral-800 text-gray-500 cursor-not-allowed'
+                    : 'bg-neutral-800 text-white hover:bg-neutral-700'
+                }`}
+              >
+                Previous
+              </button>
+
+              {currentStep < steps.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!isStepValid()}
+                  className={`px-6 py-2 rounded-md transition-colors ${
+                    isStepValid()
+                      ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:from-blue-500 hover:to-blue-400'
+                      : 'bg-neutral-800 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Next
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!isStepValid() || isSubmitting}
+                  className={`px-8 py-2 rounded-md transition-colors ${
+                    isStepValid() && !isSubmitting
+                      ? 'bg-gradient-to-r from-green-600 to-green-500 text-white hover:from-green-500 hover:to-green-400'
+                      : 'bg-neutral-800 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  {isSubmitting ? 'Submitting...' : 'Submit Evaluation'}
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}

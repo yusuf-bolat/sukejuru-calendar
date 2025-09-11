@@ -3,13 +3,15 @@
 @tailwind utilities;
 
 .app-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 20px 24px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #404040;
+  padding: 12px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  margin-bottom: 24px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 0;
+  position: relative;
 }
 .app-title {
   color: white;
@@ -29,13 +31,19 @@
 
 html, body, #__next {
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: #181818; /* match reference page */
-  color: #f2f2f2;
+  background: #1a1a1a;
+  background-attachment: fixed;
+  color: #e3e3e3;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+  font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
 }
 
 /* Buttons */
@@ -53,10 +61,12 @@ input, textarea, select {
 
 /* ========== Styles ported from the reference design ========== */
 .app-container {
-  min-height: 100vh;
-  background: #181818;
+  height: 100vh;
+  background: transparent;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  position: relative;
 }
 .app-header {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -65,7 +75,7 @@ input, textarea, select {
   justify-content: space-between;
   align-items: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  margin-bottom: 24px;
+  margin-bottom: 8px;
   position: relative;
 }
 .app-title {
@@ -77,52 +87,91 @@ input, textarea, select {
   align-items: center;
   gap: 10px;
 }
-.user-info { display: flex; align-items: center; gap: 10px; }
-.user-welcome { color: white; font-size: 14px; }
-.user-name { font-weight: 600; color: #ffd700; }
+.user-info { display: flex; align-items: center; gap: 16px; }
+.user-welcome { color: #cbd5e1; font-size: 14px; font-weight: 400; }
+.user-name { font-weight: 600; color: #3b82f6; }
 .nav-btn, .logout-btn {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 8px 12px;
-  border-radius: 6px;
+  background: transparent;
+  color: #e3e3e3;
+  border: 1px solid #5f6368;
+  padding: 8px 16px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
-  transition: all 0.3s ease;
+  font-size: 14px;
+  font-weight: 400;
+  transition: all 0.2s ease;
   text-decoration: none;
 }
-.nav-btn:hover, .logout-btn:hover { background: rgba(255, 255, 255, 0.3); transform: translateY(-1px); }
+.nav-btn:hover, .logout-btn:hover { 
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #8ab4f8;
+}
 
-/* Notification Button Styles */
+/* Notification Button Styles - Google Calendar Style */
 .notification-enabled {
-  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+  background: #137333;
   color: white;
-  border: 1px solid rgba(76, 175, 80, 0.5);
-  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+  border: 1px solid #137333;
 }
 .notification-enabled:hover {
-  background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+  background: #0d652d;
+  border-color: #0d652d;
 }
 .notification-disabled {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #9aa0a6;
+  border: 1px solid #5f6368;
 }
 .notification-disabled:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
+  background: rgba(154, 160, 166, 0.08);
+  color: #e3e3e3;
 }
 
-.main-content { padding: 0 24px; flex: 1 1 auto; }
+.main-content { 
+  padding: 0 24px; 
+  flex: 1; 
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
 #main-layout { display: flex; justify-content: center; align-items: flex-start; gap: 32px; width: 100%; box-sizing: border-box; margin: 0; height: 75vh; }
 #calendar { flex: 0 0 70%; width: 70vw; min-width: 400px; max-width: 100%; margin-right: 0; height: 80vh; }
 #chatbot-container { flex: 0 0 30%; width: 30vw; min-width: 250px; max-width: 400px; border: 1px solid #333; border-radius: 16px; padding: 20px 18px 18px 18px; background: #222; box-shadow: 0 4px 16px rgba(0,0,0,0.18); margin-left: 0; height: 80vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-start; gap: 8px; }
-#chat-messages { flex: 1 1 auto; min-height: 120px; max-height: 50vh; overflow-y: auto; margin-bottom: 16px; background: #181818; border-radius: 8px; border: 1px solid #333; padding: 12px 10px; font-size: 15px; color: #f2f2f2; box-shadow: 0 2px 8px rgba(0,0,0,0.10); }
+#chat-messages { 
+  flex: 1 1 auto; 
+  min-height: 120px; 
+  max-height: 50vh; 
+  overflow-y: auto; 
+  margin-bottom: 16px; 
+  background: #1a1a1a; 
+  border-radius: 4px; 
+  border: 1px solid #404040; 
+  padding: 16px 14px; 
+  font-size: 14px; 
+  color: #e3e3e3; 
+  box-shadow: none;
+}
 .chat-user { color: #4fc3f7; font-weight: 500; margin-bottom: 4px; padding: 2px 0; }
 .chat-bot { color: #f2f2f2; font-weight: 400; margin-bottom: 8px; padding: 2px 0; }
-#chat-input { width: 100%; padding: 8px 10px; height: 38px; border-radius: 8px; border: 1px solid #333; background: #222; color: #f2f2f2; font-size: 15px; outline: none; box-sizing: border-box; transition: border 0.2s; }
-#chat-input:focus { border: 1.5px solid #4fc3f7; }
+#chat-input { 
+  width: 100%; 
+  padding: 12px 16px; 
+  height: 44px; 
+  border-radius: 10px; 
+  border: 1px solid rgba(148, 163, 184, 0.2); 
+  background: rgba(15, 23, 42, 0.6); 
+  color: #e2e8f0; 
+  font-size: 14px; 
+  outline: none; 
+  box-sizing: border-box; 
+  transition: all 0.3s ease;
+  backdrop-filter: blur(5px);
+}
+#chat-input:focus { 
+  border: 1px solid #3b82f6; 
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
 #send-btn { padding: 10px 0; height: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; transition: all 0.3s ease; }
 #send-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
 
@@ -161,3 +210,874 @@ input, textarea, select {
   --fc-now-indicator-color: #ff6b6b;
 }
 .fc .fc-scrollgrid, .fc .fc-scrollgrid td, .fc .fc-scrollgrid th, .fc .fc-timegrid-slot, .fc .fc-timegrid-divider { border-color: #2b2b2b; }
+
+/* Course Evaluation System Styles */
+.course-card {
+  background: rgba(40, 40, 40, 0.7);
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 24px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.course-card:hover {
+  border-color: #555;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.rating-stars {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.rating-star {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #666;
+}
+
+.rating-star:hover,
+.rating-star.active {
+  color: #ffd700;
+  transform: scale(1.1);
+}
+
+.evaluation-modal {
+  background: rgba(30, 30, 30, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid #444;
+}
+
+.progress-bar {
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.stat-bar {
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.course-search {
+  background: rgba(40, 40, 40, 0.8);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #f2f2f2;
+  transition: border-color 0.3s ease;
+}
+
+.course-search:focus {
+  border-color: #667eea;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.course-filter-select {
+  background: rgba(40, 40, 40, 0.8);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #f2f2f2;
+  transition: border-color 0.3s ease;
+}
+
+.course-filter-select:focus {
+  border-color: #667eea;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+/* Modal animations */
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-content {
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+/* Button hover effects */
+.btn-evaluate {
+  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.btn-evaluate:hover {
+  background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+}
+
+.btn-evaluate:disabled {
+  background: #666;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-more-info {
+  background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.btn-more-info:hover {
+  background: linear-gradient(135deg, #1976D2 0%, #1565C0 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4);
+}
+
+/* Tab Panel Styles */
+.tab-panel-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #2a2a2a;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.tab-header {
+  display: flex;
+  background: #1e1e1e;
+  border-bottom: 2px solid #333;
+  padding: 0;
+}
+
+.tab-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 20px;
+  background: transparent;
+  border: none;
+  color: #9aa0a6;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  font-weight: 400;
+  border-radius: 0;
+  position: relative;
+}
+
+.tab-button:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e3e3e3;
+}
+
+.tab-button.active {
+  background: transparent;
+  color: #8ab4f8;
+  border-bottom: 2px solid #8ab4f8;
+}
+
+.tab-icon {
+  font-size: 16px;
+}
+
+.tab-label {
+  font-size: 14px;
+}
+
+.tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Todo Panel Styles */
+.todo-panel {
+  padding: 16px;
+  background: #2a2a2a;
+  color: #f2f2f2;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.todo-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #444;
+}
+
+.todo-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #4a90e2;
+}
+
+.todo-date, .todo-month {
+  margin: 0;
+  font-size: 12px;
+  color: #999;
+  font-style: italic;
+}
+
+.todo-loading {
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  padding: 20px;
+}
+
+/* Weekly Todo Grid */
+.weekly-todos {
+  padding: 0;
+  margin: 0;
+}
+
+/* Ensure calendar and todos have matching borders */
+#calendar .fc-col-header-cell,
+#calendar .fc-timegrid-col {
+  border-right: 1px solid #444 !important;
+}
+
+#calendar .fc-timegrid-col:last-child,
+#calendar .fc-col-header-cell:last-child {
+  border-right: 1px solid #444 !important;
+}
+
+.weekly-todo-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0;
+  background: #2a2a2a;
+  border-top: none; /* Remove top border to create seamless connection */
+  position: relative;
+  width: 100%;
+  border-left: 1px solid #444; /* Match calendar's left border */
+  border-right: 1px solid #444; /* Match calendar's right border */
+}
+
+.day-todo-column {
+  background: #2a2a2a;
+  border-right: 1px solid #444; /* Match FullCalendar's original grid line color */
+  padding: 8px 6px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-sizing: border-box; /* Ensure borders are included in width */
+}
+
+.day-todo-column:first-child {
+  border-left: none; /* No left border on first column since grid has border */
+}
+
+.day-todo-column:last-child {
+  border-right: none; /* No right border on last column since grid has border */
+}
+
+.day-header {
+  display: none; /* Hide the day headers since they're in the calendar above */
+}
+
+.day-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: #4a90e2;
+  display: block;
+}
+
+.day-date {
+  font-size: 14px;
+  color: #ccc;
+}
+
+.day-todos {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Daily and Monthly Todo Lists */
+.daily-todos, .monthly-todos {
+  padding: 16px;
+}
+
+.todo-header {
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #444;
+}
+
+.todo-header h3 {
+  margin: 0;
+  color: #4a90e2;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Todo Item Styles */
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #333;
+  border-radius: 8px;
+  border-left: 4px solid transparent;
+  transition: all 0.3s ease;
+}
+
+.todo-item.compact {
+  padding: 4px 6px;
+  gap: 6px;
+  border-radius: 4px;
+  margin-bottom: 3px;
+  background: #333;
+  border: none;
+}
+
+.todo-item.compact .todo-title {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.todo-item.compact .todo-course {
+  font-size: 10px;
+}
+
+.todo-item.compact .todo-time {
+  font-size: 10px;
+}
+
+.todo-item.compact .todo-checkbox {
+  width: 12px;
+  height: 12px;
+}
+
+.todo-item.compact .priority-indicator {
+  width: 6px;
+  height: 6px;
+}
+
+.todo-item.compact .todo-delete {
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+}
+
+.todo-item:hover {
+  background: #3a3a3a;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.todo-checkbox-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.todo-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #4a90e2;
+}
+
+.priority-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.todo-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-content.completed {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.todo-title {
+  font-weight: 600;
+  color: #f2f2f2;
+  font-size: 14px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.todo-course {
+  font-size: 12px;
+  color: #4a90e2;
+  margin-bottom: 2px;
+}
+
+.todo-time {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.todo-description {
+  font-size: 12px;
+  color: #ccc;
+  margin-top: 4px;
+  word-break: break-word;
+}
+
+.todo-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.todo-date {
+  font-size: 12px;
+  color: #999;
+}
+
+.todo-delete {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: #ff4444;
+  color: white;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.todo-delete:hover {
+  background: #ff6666;
+  transform: scale(1.1);
+}
+
+.no-todos {
+  text-align: center;
+  color: #555;
+  font-style: italic;
+  padding: 8px 4px;
+  font-size: 10px;
+}
+
+/* Calendar layout adjustments */
+#main-layout {
+  display: flex;
+  gap: 24px;
+  flex: 1;
+  padding: 0;
+  max-width: none;
+  margin: 0;
+  width: 100%;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#calendar-section {
+  flex: 2.5;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 400px;
+  min-height: 0;
+}
+
+#calendar {
+  flex: 1;
+  background: #303030;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+  width: 100%;
+}
+
+#calendar .fc {
+  height: 100% !important;
+}
+
+/* FullCalendar height optimization */
+.fc .fc-scrollgrid {
+  height: 100% !important;
+}
+
+.fc .fc-view-harness {
+  height: 100% !important;
+}
+
+.fc .fc-scroller {
+  overflow-y: auto !important;
+  height: 100% !important;
+}
+
+/* Remove extra space from FullCalendar */
+.fc-header-toolbar {
+  margin-bottom: 0.5em !important;
+}
+
+.fc-toolbar {
+  margin-bottom: 0.5em !important;
+}
+
+/* Ensure calendar section uses full height */
+#calendar-section {
+  flex: 2.5;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+#calendar {
+  flex: 1;
+  background: #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+}
+
+#calendar .fc {
+  height: 100% !important;
+}
+
+/* Sidebar tabs optimization */
+#sidebar-tabs {
+  flex: 0 0 400px;
+  width: 400px;
+  height: 100%;
+  overflow: hidden;
+  background: #303030;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  min-height: 0;
+}
+
+/* Professional FullCalendar Styling - Google Calendar Style */
+.fc .fc-toolbar {
+  background: #303030;
+  padding: 16px 24px;
+  border-bottom: 1px solid #404040;
+  margin-bottom: 0 !important;
+}
+
+.fc .fc-toolbar-title {
+  color: #e3e3e3;
+  font-weight: 400;
+  font-size: 22px;
+  font-family: 'Google Sans', sans-serif;
+}
+
+.fc .fc-button-primary {
+  background: transparent;
+  border: 1px solid #5f6368;
+  color: #e3e3e3;
+  font-weight: 400;
+  border-radius: 4px;
+  padding: 6px 16px;
+  transition: all 0.2s ease;
+  font-size: 14px;
+}
+
+.fc .fc-button-primary:hover {
+  background: rgba(138, 180, 248, 0.08);
+  border-color: #8ab4f8;
+}
+
+.fc .fc-button-primary:focus {
+  box-shadow: none;
+  outline: 2px solid #8ab4f8;
+  outline-offset: 1px;
+}
+
+.fc .fc-button-primary:disabled {
+  opacity: 0.38;
+  background: transparent;
+}
+
+.fc .fc-button-primary.fc-button-active {
+  background: #8ab4f8;
+  color: #1a1a1a;
+  border-color: #8ab4f8;
+}
+
+.fc .fc-col-header {
+  background: #303030;
+  border-bottom: 1px solid #404040;
+}
+
+.fc .fc-col-header-cell {
+  color: #9aa0a6;
+  font-weight: 500;
+  font-size: 11px;
+  padding: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-right: 1px solid #404040;
+}
+
+.fc .fc-daygrid-day-number, .fc .fc-col-header-cell-cushion {
+  color: #e3e3e3;
+  text-decoration: none;
+}
+
+.fc .fc-timegrid-slot {
+  border-top: 1px solid #404040;
+  height: 48px !important;
+}
+
+.fc .fc-timegrid-slot-minor {
+  display: none !important;
+}
+
+.fc .fc-timegrid-slot-label {
+  color: #9aa0a6;
+  font-size: 11px;
+  font-weight: 400;
+  padding: 0 12px;
+}
+
+.fc .fc-event {
+  border-radius: 4px;
+  border: none;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.fc .fc-event-title {
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.fc .fc-timegrid-body {
+  background: #1a1a1a;
+}
+
+.fc .fc-scrollgrid-section > * {
+  border-color: #404040;
+}
+
+.fc .fc-daygrid-day {
+  background: #1a1a1a;
+}
+
+.fc .fc-daygrid-day:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fc .fc-day-today {
+  background-color: rgba(138, 180, 248, 0.08) !important;
+}
+
+.fc .fc-timegrid-col {
+  border-right: 1px solid #404040;
+}
+
+.fc .fc-scrollgrid {
+  border: 1px solid #404040;
+  border-radius: 8px;
+}
+
+/* Smooth transitions for responsive changes */
+#main-layout, #calendar-section, #sidebar-tabs {
+  transition: all 0.3s ease;
+}
+
+/* Ensure proper sizing on all screen sizes */
+* {
+  box-sizing: border-box;
+}
+
+/* Viewport unit fallback for mobile */
+.app-container {
+  height: 100vh;
+  height: 100dvh; /* Dynamic viewport height for mobile browsers */
+}
+
+@supports (height: 100dvh) {
+  .app-container {
+    height: 100dvh;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  #main-layout {
+    gap: 16px;
+    padding: 0 16px;
+  }
+  
+  #sidebar-tabs {
+    width: 350px;
+    flex: 0 0 350px;
+  }
+}
+
+@media (max-width: 1024px) {
+  #main-layout {
+    gap: 16px;
+    padding: 0 16px;
+  }
+  
+  #calendar-section {
+    flex: 2;
+    min-width: 300px;
+  }
+  
+  #sidebar-tabs {
+    width: 320px;
+    flex: 0 0 320px;
+  }
+  
+  .main-content {
+    padding: 0 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  #main-layout {
+    flex-direction: column;
+    gap: 16px;
+    height: auto;
+    padding: 0 12px;
+  }
+  
+  #calendar-section {
+    flex: none;
+    min-width: auto;
+  }
+  
+  #calendar {
+    min-height: 400px;
+  }
+  
+  #sidebar-tabs {
+    flex: none;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    height: 300px;
+  }
+  
+  .main-content {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  #main-layout {
+    padding: 0 8px;
+  }
+  
+  .weekly-todo-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  
+  .day-todo-column {
+    min-height: 100px;
+    padding: 6px;
+  }
+  
+  .tab-button {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  
+  .tab-icon {
+    font-size: 14px;
+  }
+  
+  .todo-item {
+    padding: 10px;
+    gap: 10px;
+  }
+  
+  #sidebar-tabs {
+    min-width: 280px;
+  }
+}
+
+/* Responsive FullCalendar improvements */
+.fc {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.fc .fc-toolbar {
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+
+.fc .fc-toolbar-chunk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Handle window resize events */
+@media (max-width: 900px) {
+  .fc .fc-toolbar {
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+  
+  .fc .fc-toolbar-chunk {
+    justify-content: center;
+  }
+  
+  .fc .fc-button-group {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}

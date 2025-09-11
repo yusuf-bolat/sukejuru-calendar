@@ -7,13 +7,14 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core'
 import Link from 'next/link'
 import Image from 'next/image'
-import { ChatPanel } from '@/components/ChatPanel'
+import { TabPanel } from '@/components/TabPanel'
+import { TodoPanel } from '@/components/TodoPanel'
 import { useRouter } from 'next/router'
 
 // Notification Service
 class EventNotificationService {
   private static instance: EventNotificationService
-  private notificationTimeouts: Set<NodeJS.Timeout> = new Set()
+  private notificationTimeouts: Set<number> = new Set()
   private notifiedEvents: Set<string> = new Set()
 
   static getInstance(): EventNotificationService {
@@ -167,7 +168,7 @@ class EventNotificationService {
             }
           }, timeoutMs)
 
-          this.notificationTimeouts.add(timeoutId)
+          this.notificationTimeouts.add(Number(timeoutId))
 
           console.log(`⏰ Scheduled notification for "${event.title}" in ${Math.round(timeoutMs / 1000)} seconds (event at ${eventStart.toLocaleString()})`)
         }
@@ -225,7 +226,26 @@ export default function Home() {
   const [slotMinTime, setSlotMinTime] = useState<string>('08:00:00')
   const [notificationService] = useState(() => EventNotificationService.getInstance())
   const [notificationsEnabled, setNotificationsEnabled] = useState(false)
+  const [currentView, setCurrentView] = useState<'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'>('timeGridWeek')
+  const [currentDate, setCurrentDate] = useState<Date>(new Date())
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined)
+  const [calendarRef, setCalendarRef] = useState<any>(null)
   const router = useRouter()
+
+  // Handle window resize for calendar
+  useEffect(() => {
+    const handleResize = () => {
+      if (calendarRef) {
+        // Force FullCalendar to recalculate its size
+        setTimeout(() => {
+          calendarRef.getApi().updateSize()
+        }, 100)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [calendarRef])
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -355,6 +375,49 @@ export default function Home() {
     }).select('*').single()
     if (!error && data) setEvents(prev => [...prev, { id: data.id, title, start, end }])
   }
+
+  // Convert calendar event to todo item
+  const convertEventToTodo = async (event: EventInput) => {
+    try {
+      if (!session) return
+
+      const eventStart = new Date(event.start as string)
+      const dueDate = eventStart.toISOString().split('T')[0]
+      const dueTime = eventStart.toTimeString().split(' ')[0].slice(0, 5)
+
+      const todoData = {
+        title: event.title as string,
+        description: `Converted from calendar event: ${event.title}`,
+        due_date: dueDate,
+        due_time: dueTime,
+        course: 'General',
+        type: 'task',
+        priority: 'medium' as const,
+        user_id: session.user.id,
+        completed: false
+      }
+
+      const { data, error } = await supabase
+        .from('assignments')
+        .insert(todoData)
+        .select('*')
+        .single()
+
+      if (error) {
+        console.error('Error converting event to todo:', error)
+        alert('Failed to convert event to todo')
+      } else {
+        console.log('Event converted to todo:', data)
+        alert('Event successfully converted to todo!')
+        
+        // Trigger todo panel refresh by dispatching custom event
+        window.dispatchEvent(new CustomEvent('todo:refresh'))
+      }
+    } catch (error) {
+      console.error('Error converting event to todo:', error)
+      alert('Failed to convert event to todo')
+    }
+  }
   
   const handleEventDrop = async (dropInfo: EventDropArg) => {
     const { id } = dropInfo.event
@@ -406,9 +469,6 @@ export default function Home() {
           />
         </div>
         <div className="user-info">
-          <span className="user-welcome">
-            Welcome, <span className="user-name">{profileName}</span>!
-          </span>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {/* Notification Toggle */}
             <button
@@ -425,65 +485,96 @@ export default function Home() {
                 }
               }}
               className={`nav-btn ${notificationsEnabled ? 'notification-enabled' : 'notification-disabled'}`}
+              title={notificationsEnabled ? 'Notifications ON - Click to disable' : 'Notifications OFF - Click to enable'}
               style={{
-                background: notificationsEnabled ? '#4CAF50' : '#666',
-                color: 'white',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px',
-                fontSize: '12px'
+                gap: '6px',
+                fontSize: '13px'
               }}
-              title={notificationsEnabled ? 'Notifications ON - Click to disable' : 'Notifications OFF - Click to enable'}
             >
               {notificationsEnabled ? '🔔' : '🔇'}
-              {notificationsEnabled ? 'ON' : 'OFF'}
+              <span style={{ fontSize: '13px' }}>{notificationsEnabled ? 'ON' : 'OFF'}</span>
             </button>
             
+            <Link href="/courses" className="nav-btn">
+              📚 Courses
+            </Link>
             <Link href="/todo" className="nav-btn">
               📝 Todo
             </Link>
             <Link href="/profile" className="nav-btn">
               Profile
             </Link>
-            <button 
-              onClick={() => supabase.auth.signOut()} 
-              className="logout-btn"
-            >
-              Logout
-            </button>
           </div>
         </div>
       </div>
 
       <div className="main-content">
         <div id="main-layout">
-          <div id="calendar">
-            <FullCalendar
-              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-              initialView="timeGridWeek"
-              firstDay={1}
-              timeZone="local"
-              headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
-              selectable={true}
-              selectMirror={true}
-              select={handleDateSelect}
-              events={events}
-              height="80vh"
-              editable={!!session}
-              eventDrop={handleEventDrop}
-              eventClick={handleEventClick}
-              eventResizableFromStart={true}
-              slotMinTime={slotMinTime}
-              slotMaxTime="23:00:00"
+          <div id="calendar-section">
+            <div id="calendar">
+              <FullCalendar
+                ref={setCalendarRef}
+                plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+                initialView="timeGridWeek"
+                firstDay={1}
+                timeZone="local"
+                headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
+                selectable={true}
+                selectMirror={true}
+                select={handleDateSelect}
+                events={events}
+                height="100%"
+                editable={!!session}
+                slotDuration="01:00:00"
+                slotLabelInterval="01:00:00"
+                eventDrop={handleEventDrop}
+                eventClick={(clickInfo) => {
+                  const action = prompt(
+                    `What would you like to do with "${clickInfo.event.title}"?\n\n` +
+                    `1. Delete event (type "delete")\n` +
+                    `2. Convert to todo (type "todo")\n` +
+                    `3. Cancel (press Cancel or leave blank)`
+                  )
+                  
+                  if (action?.toLowerCase() === 'delete') {
+                    handleEventClick(clickInfo)
+                  } else if (action?.toLowerCase() === 'todo') {
+                    convertEventToTodo({
+                      id: clickInfo.event.id,
+                      title: clickInfo.event.title,
+                      start: clickInfo.event.start?.toISOString(),
+                      end: clickInfo.event.end?.toISOString()
+                    })
+                  }
+                }}
+                eventResizableFromStart={true}
+                slotMinTime={slotMinTime}
+                slotMaxTime="23:00:00"
+                viewDidMount={(viewInfo) => {
+                  setCurrentView(viewInfo.view.type as 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay')
+                  setCurrentDate(viewInfo.view.currentStart)
+                }}
+                datesSet={(dateInfo) => {
+                  setCurrentDate(dateInfo.start)
+                }}
+                dateClick={(dateInfo) => {
+                  setSelectedDate(dateInfo.date)
+                }}
+              />
+            </div>
+          </div>
+          
+          {/* Tabs panel on the right */}
+          <div id="sidebar-tabs">
+            <TabPanel 
+              view={currentView} 
+              currentDate={currentDate} 
+              selectedDate={selectedDate} 
             />
           </div>
-          <ChatPanel />
         </div>
-      </div>
-
-      <div className="site-footer">
-        <span>© 2025 Student Calendar • </span>
-        <a href="#" target="_blank" rel="noopener">Privacy Policy</a>
       </div>
     </div>
   )

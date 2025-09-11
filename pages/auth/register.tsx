@@ -13,6 +13,24 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Program options based on university selection
+  const getPrograms = () => {
+    if (university === 'Kyoto University of Advanced Science') {
+      return [
+        'Mechanical and Electrical Engineering',
+        'Bioenvironmental Science', 
+        'Business and Global Economics'
+      ]
+    }
+    return []
+  }
+
+  // Reset program when university changes
+  const handleUniversityChange = (value: string) => {
+    setUniversity(value)
+    setProgram('') // Reset program selection
+  }
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -66,12 +84,40 @@ export default function RegisterPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-white/90 mb-2">Program / Major</label>
-              <input 
-                placeholder="e.g. Computer Science" 
-                value={program} 
-                onChange={e=>setProgram(e.target.value)} 
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              />
+              {university === 'Kyoto University of Advanced Science' ? (
+                <select 
+                  value={program} 
+                  onChange={e => setProgram(e.target.value)} 
+                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all appearance-none"
+                  style={{ 
+                    backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e")`,
+                    backgroundPosition: 'right 0.5rem center',
+                    backgroundRepeat: 'no-repeat',
+                    backgroundSize: '1.5em 1.5em'
+                  }}
+                >
+                  <option value="" disabled>Select your program</option>
+                  {getPrograms().map((prog) => (
+                    <option key={prog} value={prog} className="bg-gray-800 text-white">
+                      {prog}
+                    </option>
+                  ))}
+                </select>
+              ) : university === 'Other' ? (
+                <input 
+                  placeholder="Enter your program/major" 
+                  value={program} 
+                  onChange={e => setProgram(e.target.value)} 
+                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
+                />
+              ) : (
+                <input 
+                  placeholder="Please select a university first" 
+                  value={program} 
+                  disabled
+                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white/50 placeholder-white/30 cursor-not-allowed"
+                />
+              )}
             </div>
           </div>
 
@@ -87,12 +133,26 @@ export default function RegisterPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-white/90 mb-2">University</label>
-              <input 
-                placeholder="Enter university name" 
+              <select 
                 value={university} 
-                onChange={e=>setUniversity(e.target.value)} 
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              />
+                onChange={e => handleUniversityChange(e.target.value)} 
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all appearance-none"
+                style={{ 
+                  backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e")`,
+                  backgroundPosition: 'right 0.5rem center',
+                  backgroundRepeat: 'no-repeat',
+                  backgroundSize: '1.5em 1.5em'
+                }}
+                required
+              >
+                <option value="" disabled>Select your university</option>
+                <option value="Kyoto University of Advanced Science" className="bg-gray-800 text-white">
+                  Kyoto University of Advanced Science
+                </option>
+                <option value="Other" className="bg-gray-800 text-white">
+                  Other
+                </option>
+              </select>
             </div>
           </div>
 

@@ -3,12 +3,35 @@ import { supabase } from '@/lib/supabaseClient'
 
 export function ChatPanel() {
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<{role:'user'|'assistant',content:string}[]>([
-    { role: 'assistant', content: 'Welcome to sukejuru! Tell me what to add, move, or delete in your calendar. For example: "Add MoM", "Move DSP lecture to Friday 1pm", or "Add orientation session from Sep 1–10, 10am–5pm daily". You can also ask me to "optimize my schedule" for AI-powered suggestions! 📝 Assignments will now be added to your Todo list instead of cluttering the calendar.' }
-  ])
+  const [messages, setMessages] = useState<{role:'user'|'assistant',content:string}[]>([])
   const [loading, setLoading] = useState(false)
   const [pendingOptimization, setPendingOptimization] = useState<any>(null)
+  const [userName, setUserName] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          const { data: prof } = await supabase.from('profiles').select('name, email').eq('id', session.user.id).single()
+          const name = prof?.name || session.user.email?.split('@')[0] || 'there'
+          setUserName(name)
+          setMessages([{ 
+            role: 'assistant', 
+            content: `Hi ${name}, how can I help you today? I can assist with schedule management, course recommendations, and answering questions about the website features.` 
+          }])
+        }
+      } catch (error) {
+        console.error('Error loading user:', error)
+        setMessages([{ 
+          role: 'assistant', 
+          content: 'Hi there, how can I help you today? I can assist with schedule management, course recommendations, and answering questions about the website features.' 
+        }])
+      }
+    }
+    loadUser()
+  }, [])
 
   useEffect(()=>{ scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' }) }, [messages])
 

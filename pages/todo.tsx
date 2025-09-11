@@ -902,6 +902,9 @@ export default function TodoList() {
             <Link href="/" className="nav-btn">
               Calendar
             </Link>
+            <Link href="/courses" className="nav-btn">
+              📚 Courses
+            </Link>
             <Link href="/profile" className="nav-btn">
               Profile
             </Link>
