@@ -8,3 +8,8 @@ Setup
 - Apply SQL in `database-schema.sql` and `supabase.sql` to your Supabase project
 - Import courses via POST /api/import-courses (optional)
 
+
+
+
+
+
