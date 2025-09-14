@@ -468,6 +468,9 @@ export default function Home() {
             style={{ color: 'white' }}
           />
         </div>
+
+        {/* Menu bar */}
+
         <div className="user-info">
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {/* Notification Toggle */}
@@ -496,6 +499,11 @@ export default function Home() {
               {notificationsEnabled ? '🔔' : '🔇'}
               <span style={{ fontSize: '13px' }}>{notificationsEnabled ? 'ON' : 'OFF'}</span>
             </button>
+
+            {/* MAKE THIS OPEN AS A SMOOTH SIDE BAR IN THE FUTURE */}
+            <Link href="/friends" className="nav-btn">
+              👥 Friends
+            </Link>
             
             <Link href="/courses" className="nav-btn">
               📚 Courses
