@@ -66,7 +66,7 @@ export default function FriendsPage() {
         <div className="user-info">
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <Link href="/" className="nav-btn">
-              Calendar
+                📅 Calendar
             </Link>
             <Link href="/courses" className="nav-btn">
               📚 Courses
