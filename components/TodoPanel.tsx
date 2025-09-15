@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import React from 'react'
 
 interface Assignment {
   id: string
@@ -20,7 +19,7 @@ interface TodoPanelProps {
   selectedDate?: Date
 }
 
-export function TodoPanel({ view, currentDate, selectedDate, forSidebar = false }: TodoPanelProps & { forSidebar?: boolean }) {
+export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -179,88 +178,10 @@ export function TodoPanel({ view, currentDate, selectedDate, forSidebar = false 
     }
   }
 
-  // Helper for drag
-  const handleDragStart = (e: React.DragEvent, assignment: Assignment) => {
-    // FullCalendar expects the element to have fc-event class and data-event
-    e.currentTarget.classList.add('fc-event')
-    e.currentTarget.setAttribute('data-event', JSON.stringify({
-      title: assignment.title,
-      duration: '00:30', // 30 min default
-      extendedProps: { assignmentId: assignment.id }
-    }))
-    // For backward compatibility
-    e.dataTransfer.setData('text', assignment.title)
-    e.dataTransfer.setData('todo', JSON.stringify(assignment))
-    e.dataTransfer.effectAllowed = 'copy'
-  }
-
   if (loading) {
     return (
       <div className="todo-panel">
         <div className="todo-loading">Loading todos...</div>
-      </div>
-    )
-  }
-
-  // Always show vertical list if forSidebar is true
-  if (forSidebar) {
-    const filteredAssignments = getFilteredAssignments()
-    return (
-      <div className="todo-panel vertical-todos">
-        <div className="todo-header">
-          <h3>📝 Todo List</h3>
-        </div>
-        <div className="todo-list">
-          {filteredAssignments.map(assignment => (
-            <div
-              key={assignment.id}
-              className="todo-item draggable fc-event"
-              draggable
-              onDragStart={e => handleDragStart(e, assignment)}
-              style={{ position: 'relative' }}
-              data-event={JSON.stringify({
-                title: assignment.title,
-                duration: '00:30',
-                extendedProps: { assignmentId: assignment.id }
-              })}
-            >
-              {/* Task mark on corner */}
-              <span style={{ position: 'absolute', top: 4, right: 4, width: 12, height: 12, borderRadius: '50%', background: getPriorityColor(assignment.priority), border: '2px solid #222' }}></span>
-              <div className="todo-checkbox-container">
-                <input
-                  type="checkbox"
-                  checked={assignment.completed}
-                  onChange={(e) => toggleAssignment(assignment.id, e.target.checked)}
-                  className="todo-checkbox"
-                />
-                <div 
-                  className="priority-indicator"
-                  style={{ backgroundColor: getPriorityColor(assignment.priority) }}
-                ></div>
-              </div>
-              <div className={`todo-content ${assignment.completed ? 'completed' : ''}`}>
-                <div className="todo-title">{assignment.title}</div>
-                <div className="todo-course">{assignment.course}</div>
-                {assignment.due_time && (
-                  <div className="todo-time">{formatTime(assignment.due_time)}</div>
-                )}
-                {assignment.description && (
-                  <div className="todo-description">{assignment.description}</div>
-                )}
-              </div>
-              <button 
-                onClick={() => deleteAssignment(assignment.id)}
-                className="todo-delete"
-                title="Delete todo"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {filteredAssignments.length === 0 && (
-            <div className="no-todos">No todos</div>
-          )}
-        </div>
       </div>
     )
   }
