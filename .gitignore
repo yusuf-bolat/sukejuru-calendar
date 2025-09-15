@@ -48,3 +48,5 @@ dist/
 
 # Mobile app directory
 mobile-app/
+mobile-app.bak/
+mobile/

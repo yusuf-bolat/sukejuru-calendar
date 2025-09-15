@@ -22,7 +22,7 @@ export function TabPanel({ view, currentDate, selectedDate }: TabPanelProps) {
       id: 'todo-list' as const,
       label: 'Todo List',
       icon: '📝',
-      component: <TodoPanel view={view} currentDate={currentDate} selectedDate={selectedDate} />
+      component: <TodoPanel view={view} currentDate={currentDate} selectedDate={selectedDate} forSidebar={true} />
     }
   ]
 

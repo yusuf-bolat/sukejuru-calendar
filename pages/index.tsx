@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import FullCalendar from '@fullcalendar/react'
 import timeGridPlugin from '@fullcalendar/timegrid'
-import interactionPlugin from '@fullcalendar/interaction'
+import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core'
 import Link from 'next/link'
@@ -433,6 +433,45 @@ export default function Home() {
     }
   }
 
+  // Handle external drop from todo
+  const handleExternalDrop = async (info: any) => {
+    const todoData = info.draggedEl?.dataset?.todo
+    if (!todoData) return
+    const assignment = JSON.parse(todoData)
+    const start = info.date;
+    const end = new Date(start.getTime() + 30 * 60 * 1000); // 30 min duration
+    await createEvent({ title: assignment.title, start: start.toISOString(), end: end.toISOString() })
+  }
+
+  // Enable FullCalendar Draggable API for todo tasks
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sidebar = document.querySelector('.todo-list') as HTMLElement
+      if (sidebar && !sidebar.classList.contains('fc-draggable-initialized')) {
+        new Draggable(sidebar, {
+          itemSelector: '.draggable.fc-event',
+          eventData: function(eventEl) {
+            const data = eventEl.getAttribute('data-event')
+            return data ? JSON.parse(data) : null
+          }
+        })
+        sidebar.classList.add('fc-draggable-initialized')
+      }
+    }
+  }, [])
+
+  // Handle eventReceive for external drops
+  const handleEventReceive = async (info: any) => {
+    const start = info.event.start;
+    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    await createEvent({
+      title: info.event.title,
+      start: start.toISOString(),
+      end: end.toISOString()
+    });
+    info.event.remove();
+  }
+
   // Show loading spinner while checking authentication
   if (loading) {
     return (
@@ -570,6 +609,8 @@ export default function Home() {
                 dateClick={(dateInfo) => {
                   setSelectedDate(dateInfo.date)
                 }}
+                droppable={true}
+                eventReceive={handleEventReceive}
               />
             </div>
           </div>
