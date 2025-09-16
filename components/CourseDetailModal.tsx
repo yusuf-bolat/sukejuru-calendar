@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ForumModal from './ForumModal';
 import { CourseWithStats, EvaluationResponse } from '@/types/courses'
 import { supabase } from '@/lib/supabaseClient'
 import { X, Star, Users, Clock, TrendingUp, BookOpen, MessageCircle, BarChart3 } from 'lucide-react'
@@ -9,9 +10,10 @@ interface CourseDetailModalProps {
 }
 
 export default function CourseDetailModal({ course, onClose }: CourseDetailModalProps) {
+  const [showForumModal, setShowForumModal] = useState(false);
   const [evaluationResponses, setEvaluationResponses] = useState<EvaluationResponse[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'course-overview' | 'statistics' | 'feedback'>('course-overview')
+  const [activeTab, setActiveTab] = useState<'course-overview' | 'statistics' | 'feedback' | 'forum'>('course-overview')
 
   useEffect(() => {
     fetchEvaluationResponses()
@@ -422,71 +424,91 @@ export default function CourseDetailModal({ course, onClose }: CourseDetailModal
   )
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 backdrop-blur-sm">
-      <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-700 flex-shrink-0">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-100">{course.short_name}</h2>
-              <p className="text-gray-400">{course.course}</p>
+    <>
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 backdrop-blur-sm">
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="bg-gray-800 rounded-2xl border border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-700 flex-shrink-0">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-100">{course.short_name}</h2>
+                <p className="text-gray-400">{course.course}</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5 text-gray-400" />
-            </button>
-          </div>
 
-          {/* Tabs */}
-          <div className="flex border-b border-gray-700 flex-shrink-0">
-            <button
-              onClick={() => setActiveTab('course-overview')}
-              className={`px-4 py-3 font-medium transition-colors ${
-                activeTab === 'course-overview'
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              Course Overview
-            </button>
-            <button
-              onClick={() => setActiveTab('statistics')}
-              className={`px-4 py-3 font-medium transition-colors ${
-                activeTab === 'statistics'
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              Evaluation Statistics
-            </button>
-            <button
-              onClick={() => setActiveTab('feedback')}
-              className={`px-4 py-3 font-medium transition-colors flex items-center ${
-                activeTab === 'feedback'
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              <MessageCircle className="w-4 h-4 mr-2" />
-              Student Feedback
-              {evaluationResponses.length > 0 && (
-                <span className="ml-2 px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
-                  {evaluationResponses.length}
-                </span>
-              )}
-            </button>
-          </div>
+            {/* Tabs */}
+            <div className="flex border-b border-gray-700 flex-shrink-0">
+              <button
+                onClick={() => setActiveTab('course-overview')}
+                className={`px-4 py-3 font-medium transition-colors ${
+                  activeTab === 'course-overview'
+                    ? 'text-blue-400 border-b-2 border-blue-400'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Course Overview
+              </button>
+              <button
+                onClick={() => setActiveTab('statistics')}
+                className={`px-4 py-3 font-medium transition-colors ${
+                  activeTab === 'statistics'
+                    ? 'text-blue-400 border-b-2 border-blue-400'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                Evaluation Statistics
+              </button>
+              <button
+                onClick={() => setActiveTab('feedback')}
+                className={`px-4 py-3 font-medium transition-colors flex items-center ${
+                  activeTab === 'feedback'
+                    ? 'text-blue-400 border-b-2 border-blue-400'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <MessageCircle className="w-4 h-4 mr-2" />
+                Student Feedback
+                {evaluationResponses.length > 0 && (
+                  <span className="ml-2 px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
+                    {evaluationResponses.length}
+                  </span>
+                )}
+              </button>
+              
+              <button
+                onClick={() => {
+                  setShowForumModal(true);
+                }}
+                className={`px-4 py-3 font-medium transition-colors flex items-center ${
+                  activeTab === 'forum'
+                    ? 'text-blue-400 border-b-2 border-blue-400'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <Users className="w-4 h-4 mr-2" />
+                Forum
+              </button>
+            </div>
 
-          {/* Content */}
-          <div className="p-6 overflow-y-auto flex-1">
-            {activeTab === 'course-overview' && renderCourseOverviewTab()}
-            {activeTab === 'statistics' && renderOverviewTab()}
-            {activeTab === 'feedback' && renderFeedbackTab()}
+            {/* Content */}
+            <div className="p-6 overflow-y-auto flex-1">
+              {activeTab === 'course-overview' && renderCourseOverviewTab()}
+              {activeTab === 'statistics' && renderOverviewTab()}
+              {activeTab === 'feedback' && renderFeedbackTab()}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+      {showForumModal && (
+        <ForumModal course={course} onClose={() => setShowForumModal(false)} />
+      )}
+    </>
   )
 }
+
