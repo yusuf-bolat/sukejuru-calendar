@@ -41,7 +41,7 @@ const ForumModal: React.FC<ForumModalProps> = ({ course, onClose }) => {
         if (newMessage.course_id !== course.id) return;
 
         setMessages(prev => {
-          // dedupe by id
+          // dedupe by id  #
           if (prev.some(m => m.id === newMessage.id)) return prev;
           // remove temporary optimistic duplicates (same content + sender within 5s)
           const filtered = prev.filter(m => !(m.id.startsWith('temp-') && m.content === newMessage.content && Math.abs(Date.parse(newMessage.created_at) - Date.parse(m.created_at)) < 5000));
