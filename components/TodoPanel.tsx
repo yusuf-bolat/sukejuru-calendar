@@ -17,9 +17,10 @@ interface TodoPanelProps {
   view: 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'
   currentDate: Date
   selectedDate?: Date
+  forSidebar?: boolean // New prop for sidebar rendering mode
 }
 
-export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
+export function TodoPanel({ view, currentDate, selectedDate, forSidebar = false }: TodoPanelProps) {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -186,8 +187,8 @@ export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
     )
   }
 
-  // Weekly view - show todos under each day
-  if (view === 'timeGridWeek') {
+  // Weekly view - show todos under each day (skip when rendering sidebar)
+  if (!forSidebar && view === 'timeGridWeek') {
     const dayAssignments = getAssignmentsByDay()
     const startOfWeek = new Date(currentDate)
     startOfWeek.setDate(currentDate.getDate() - currentDate.getDay() + 1) // Monday
@@ -247,8 +248,8 @@ export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
     )
   }
 
-  // Daily view - show todos for that day
-  if (view === 'timeGridDay') {
+  // Daily view - show todos for that day (skip when rendering sidebar)
+  if (!forSidebar && view === 'timeGridDay') {
     const filteredAssignments = getFilteredAssignments()
 
     return (
@@ -299,8 +300,8 @@ export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
     )
   }
 
-  // Monthly view - show all todos for the month sorted by time
-  if (view === 'dayGridMonth') {
+  // Monthly view - show all todos for the month sorted by time (skip when rendering sidebar)
+  if (!forSidebar && view === 'dayGridMonth') {
     const filteredAssignments = getFilteredAssignments()
       .sort((a, b) => {
         const dateA = new Date(a.due_date + (a.due_time ? `T${a.due_time}` : ''))
@@ -353,6 +354,109 @@ export function TodoPanel({ view, currentDate, selectedDate }: TodoPanelProps) {
           ))}
           {filteredAssignments.length === 0 && (
             <div className="no-todos">No todos for this month</div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Sidebar mode - render todos vertically for dragging to calendar
+  if (forSidebar) {
+    const incompleteTodos = assignments.filter(assignment => !assignment.completed)
+      .sort((a, b) => {
+        const dateA = new Date(a.due_date + (a.due_time ? `T${a.due_time}` : ''))
+        const dateB = new Date(b.due_date + (b.due_time ? `T${b.due_time}` : ''))
+        return dateA.getTime() - dateB.getTime()
+      })
+
+    return (
+      <div className="todo-panel sidebar-todos">
+        <div className="todo-header">
+          <h3>📝 Drag Tasks to Calendar</h3>
+          <p className="todo-subtitle">Drag any task below to schedule it on your calendar</p>
+        </div>
+        <div className="todo-list vertical-todos" id="todo-list">
+          {incompleteTodos.map(assignment => (
+            <div 
+              key={assignment.id} 
+              className="todo-item draggable-todo"
+              draggable={true}
+              data-event={JSON.stringify({
+                title: assignment.title,
+                duration: '00:30:00', // Default 30 minutes
+                // Bold/darker green palette for todo-derived events
+                backgroundColor: '#66bb6a', // medium green
+                borderColor: '#1b5e20', // dark green border
+                textColor: '#ffffff',
+                extendedProps: {
+                  type: 'todo',
+                  priority: assignment.priority,
+                  course: assignment.course,
+                  description: assignment.description,
+                  originalTodoId: assignment.id
+                }
+              })}
+              style={{
+                cursor: 'grab',
+                transition: 'transform 0.2s ease',
+                marginBottom: '8px'
+              }}
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'copy'
+              }}
+            >
+              <div className="todo-checkbox-container">
+                <div 
+                  className="priority-indicator"
+                  style={{ backgroundColor: getPriorityColor(assignment.priority) }}
+                ></div>
+              </div>
+              <div className="todo-content">
+                <div className="todo-title">{assignment.title}</div>
+                <div className="todo-meta">
+                  <span className="todo-course">{assignment.course}</span>
+                  {assignment.due_date && (
+                    <span className="todo-date">
+                      {new Date(assignment.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {assignment.due_time && ` ${formatTime(assignment.due_time)}`}
+                    </span>
+                  )}
+                </div>
+                {assignment.description && (
+                  <div className="todo-description" style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>
+                    {assignment.description.length > 50 ? assignment.description.substring(0, 50) + '...' : assignment.description}
+                  </div>
+                )}
+              </div>
+              <div className="todo-actions">
+                <button 
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    toggleAssignment(assignment.id, true)
+                  }}
+                  className="todo-complete"
+                  title="Mark as complete"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#4fc3f7',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    padding: '4px'
+                  }}
+                >
+                  ✓
+                </button>
+              </div>
+            </div>
+          ))}
+          {incompleteTodos.length === 0 && (
+            <div className="no-todos" style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
+              <div style={{ fontSize: '24px', marginBottom: '8px' }}>✅</div>
+              <p>All caught up!</p>
+              <p style={{ fontSize: '12px' }}>No pending tasks to schedule</p>
+            </div>
           )}
         </div>
       </div>

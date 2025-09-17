@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '@/lib/supabaseClient'
+import Header from '@/components/Header'
 import { CourseWithStats, EvaluationFormData } from '@/types/courses'
 import CourseEvaluationModal from '../components/CourseEvaluationModal'
 import CourseDetailModal from '../components/CourseDetailModal'
@@ -156,11 +157,6 @@ export default function CoursesPage() {
     }
   }
 
-  const logout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
-  }
-
   const filteredCourses = courses.filter(course => {
     const matchesSearch = course.short_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          course.course.toLowerCase().includes(searchTerm.toLowerCase())
@@ -211,28 +207,9 @@ export default function CoursesPage() {
 
   return (
     <div className="app-container">
-      <div className="app-header">
-        <h1 className="app-title">
-          <BookOpen className="w-6 h-6" />
-          Course Evaluations
-        </h1>
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => router.push('/ai-advisor')} 
-            className="nav-btn bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
-          >
-            🤖 AI Advisor
-          </button>
-          <button onClick={() => router.push('/')} className="nav-btn">
-            Back to Calendar
-          </button>
-          <button onClick={logout} className="logout-btn">
-            Logout
-          </button>
-        </div>
-      </div>
+      <Header />
 
-      <div className="main-content">
+  <div className="main-content">
         {/* Search and Filter Section */}
         <div className="bg-neutral-900/70 border border-neutral-800 rounded-xl p-6 mb-6">
           <div className="flex flex-col sm:flex-row gap-4">
