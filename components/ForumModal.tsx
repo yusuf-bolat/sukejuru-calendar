@@ -32,16 +32,25 @@ const ForumModal: React.FC<ForumModalProps> = ({ course, onClose }) => {
   supabase.auth.getUser().then(res => setCurrentUserId(res.data?.user?.id ?? null)).catch(() => {});
   fetchMessages();
 
-    // subscribe to realtime inserts for this course
+    // subscribe to realtime inserts for forum_messages (no server-side filter)
+    // filter client-side to avoid missing events due to filter issues
     const channel = supabase
       .channel('public:forum_messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'forum_messages', filter: `course_id=eq.${course.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'forum_messages' }, (payload) => {
         const newMessage = payload.new as ForumMessage;
-        setMessages(prev => [...prev, newMessage]);
-        // scroll to bottom
+        if (newMessage.course_id !== course.id) return;
+
+        setMessages(prev => {
+          // dedupe by id
+          if (prev.some(m => m.id === newMessage.id)) return prev;
+          // remove temporary optimistic duplicates (same content + sender within 5s)
+          const filtered = prev.filter(m => !(m.id.startsWith('temp-') && m.content === newMessage.content && Math.abs(Date.parse(newMessage.created_at) - Date.parse(m.created_at)) < 5000));
+          return [...filtered, newMessage];
+        });
+
         requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }));
       })
-      .subscribe()
+      .subscribe();
 
     return () => {
       mounted.current = false;
