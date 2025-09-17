@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import Header from '@/components/Header'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/router'
@@ -818,8 +819,14 @@ export default function TodoList() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
-        <div className="text-white text-lg">Loading...</div>
+      <div className="app-container">
+        <Header />
+        <div className="main-content" style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
+          <div className="text-center">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-gray-400">Loading...</p>
+          </div>
+        </div>
       </div>
     )
   }
@@ -861,23 +868,18 @@ export default function TodoList() {
 
   return (
     <div className="app-container">
-      <div className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ color: 'white', fontSize: '24px', fontWeight: '700' }}>
-            📝 Assignment & Todo List
-          </span>
-        </div>
-        <div className="app-title" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-          <Image 
-            src="/sukejuru-logo.svg" 
-            alt="sukejuru" 
-            width={200} 
-            height={60}
-            style={{ color: 'white' }}
-          />
-        </div>
-        <div className="user-info">
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+      <Header />
+
+      <div className="main-content" style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginBottom: '32px',
+          gap: '32px'
+        }}>
+          <h2 style={{ color: '#f2f2f2', fontSize: '28px', margin: 0, fontWeight: '600' }}>Your Tasks & Todo List</h2>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <button
               onClick={toggleTodoNotifications}
               className={`notification-toggle ${todoNotificationsEnabled ? 'enabled' : 'disabled'}`}
@@ -899,51 +901,24 @@ export default function TodoList() {
               {todoNotificationsEnabled ? '🔔' : '🔕'}
               Todo Alerts
             </button>
-            <Link href="/" className="nav-btn">
-              Calendar
-            </Link>
-            <Link href="/courses" className="nav-btn">
-              📚 Courses
-            </Link>
-            <Link href="/profile" className="nav-btn">
-              Profile
-            </Link>
             <button 
-              onClick={() => supabase.auth.signOut()} 
-              className="logout-btn"
+              onClick={openAddModal}
+              className="button-primary"
+              style={{ 
+                padding: '12px 24px',
+                background: 'linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%)',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                boxShadow: '0 4px 15px rgba(79, 195, 247, 0.3)',
+                transition: 'all 0.3s ease'
+              }}
             >
-              Logout
+              ✨ Add New Task
             </button>
           </div>
-        </div>
-      </div>
-
-      <div className="main-content" style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          marginBottom: '32px',
-          gap: '32px'
-        }}>
-          <h2 style={{ color: '#f2f2f2', fontSize: '28px', margin: 0, fontWeight: '600' }}>Your Tasks & Todo List</h2>
-          <button 
-            onClick={openAddModal}
-            className="button-primary"
-            style={{ 
-              padding: '12px 24px',
-              background: 'linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%)',
-              border: 'none',
-              borderRadius: '12px',
-              fontSize: '16px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              boxShadow: '0 4px 15px rgba(79, 195, 247, 0.3)',
-              transition: 'all 0.3s ease'
-            }}
-          >
-            ✨ Add New Task
-          </button>
         </div>
 
         {/* Progress Overview Section */}

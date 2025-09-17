@@ -546,6 +546,33 @@ input, textarea, select {
   gap: 12px;
 }
 
+/* Vertical sidebar-specific styling */
+.vertical-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.draggable-todo {
+  cursor: grab;
+  user-select: none;
+  background: linear-gradient(180deg, #363636, #2f2f2f);
+  border: 1px solid rgba(233,30,99,0.08);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.35);
+}
+
+.draggable-todo:active {
+  cursor: grabbing;
+}
+
+/* Ensure the todo-list id area is reachable by FullCalendar's Draggable */
+#todo-list {
+  padding-right: 6px;
+}
+
 /* Todo Item Styles */
 .todo-item {
   display: flex;

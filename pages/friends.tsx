@@ -1,6 +1,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import Header from '@/components/Header'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/router'
@@ -48,44 +49,7 @@ export default function FriendsPage() {
 
   return (
     <div className="app-container">
-      <div className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ color: 'white', fontSize: '24px', fontWeight: '700' }}>
-            👥 Friends
-          </span>
-        </div>
-        <div className="app-title" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-          <Image 
-            src="/sukejuru-logo.svg" 
-            alt="sukejuru" 
-            width={200} 
-            height={60}
-            style={{ color: 'white' }}
-          />
-        </div>
-        <div className="user-info">
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <Link href="/" className="nav-btn">
-                📅 Calendar
-            </Link>
-            <Link href="/courses" className="nav-btn">
-              📚 Courses
-            </Link>
-            <Link href="/todo" className="nav-btn">
-              📝 Todo
-            </Link>
-            <Link href="/profile" className="nav-btn">
-              Profile
-            </Link>
-            <button 
-              onClick={() => supabase.auth.signOut()} 
-              className="logout-btn"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
+      <Header />
 
       <div className="main-content" style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
         <h2 style={{ color: '#f2f2f2', fontSize: '28px', margin: 0, fontWeight: '600', marginBottom: '24px' }}>Your Friends</h2>

@@ -7,6 +7,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcalendar/core'
 import Link from 'next/link'
 import Image from 'next/image'
+import Header from '@/components/Header'
 import { TabPanel } from '@/components/TabPanel'
 import { TodoPanel } from '@/components/TodoPanel'
 import { useRouter } from 'next/router'
@@ -312,6 +313,62 @@ export default function Home() {
     return () => clearInterval(refreshInterval)
   }, [events, notificationsEnabled, notificationService])
 
+  // Initialize Draggable for todo items
+  useEffect(() => {
+    let draggable: any = null
+
+    const initializeDraggable = () => {
+      const todoContainer = document.getElementById('todo-list')
+      if (todoContainer && !draggable && !todoContainer.classList.contains('fc-draggable-initialized')) {
+        draggable = new Draggable(todoContainer, {
+          itemSelector: '.draggable-todo',
+          eventData: function(eventEl: HTMLElement) {
+            const eventDataAttr = eventEl.getAttribute('data-event')
+            if (eventDataAttr) {
+              try { return JSON.parse(eventDataAttr) } catch { return null }
+            }
+            return {
+              title: 'Dropped Todo',
+              duration: '00:30:00',
+              // Match green palette used by the todo sidebar
+              backgroundColor: '#66bb6a',
+              borderColor: '#1b5e20',
+              textColor: '#ffffff'
+            }
+          }
+        })
+        // mark container so we don't double initialize
+        todoContainer.classList.add('fc-draggable-initialized')
+      }
+    }
+
+    // Try immediate initialization first
+    initializeDraggable()
+
+    // Fallback: MutationObserver watches for the #todo-list element when tabs are toggled
+    const observer = new MutationObserver(() => {
+      initializeDraggable()
+      // if initialized, disconnect observer
+      const todoContainer = document.getElementById('todo-list')
+      if (todoContainer && todoContainer.classList.contains('fc-draggable-initialized')) {
+        observer.disconnect()
+      }
+    })
+
+    observer.observe(document.body, { childList: true, subtree: true })
+
+    // Safety timeout to attempt initialize after a short delay in case MutationObserver doesn't fire
+    const fallback = setTimeout(() => initializeDraggable(), 1200)
+
+    return () => {
+      clearTimeout(fallback)
+      try { observer.disconnect() } catch {}
+      if (draggable) {
+        try { draggable.destroy() } catch {}
+      }
+    }
+  }, [session]) // Re-initialize when session changes
+
   useEffect(() => {
     const load = async () => {
       if (!session?.user) return
@@ -373,7 +430,18 @@ export default function Home() {
       start_date: start,
       end_date: end
     }).select('*').single()
-    if (!error && data) setEvents(prev => [...prev, { id: data.id, title, start, end }])
+
+    if (error) {
+      console.error('createEvent error:', error)
+      return null
+    }
+
+    if (data) {
+      setEvents(prev => [...prev, { id: data.id, title, start, end }])
+      return data
+    }
+
+    return null
   }
 
   // Convert calendar event to todo item
@@ -423,7 +491,25 @@ export default function Home() {
     const { id } = dropInfo.event
     const start = dropInfo.event.start?.toISOString()!
     const end = dropInfo.event.end?.toISOString()!
-    await supabase.from('events').update({ start_date: start, end_date: end }).eq('id', id).eq('user_id', session?.user.id)
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .update({ start_date: start, end_date: end })
+        .eq('id', id)
+        .eq('user_id', session?.user.id)
+
+      if (error) {
+        console.error('Failed to update event on drop:', error)
+        try { dropInfo.revert() } catch {}
+        return
+      }
+
+      // Keep local state in sync with calendar
+      setEvents(prev => prev.map(e => String(e.id) === String(id) ? ({ ...e, start, end }) : e))
+    } catch (err) {
+      console.error('Error in handleEventDrop:', err)
+      try { dropInfo.revert() } catch {}
+    }
   }
   
   const handleEventClick = async (clickInfo: EventClickArg) => {
@@ -443,33 +529,75 @@ export default function Home() {
     await createEvent({ title: assignment.title, start: start.toISOString(), end: end.toISOString() })
   }
 
-  // Enable FullCalendar Draggable API for todo tasks
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const sidebar = document.querySelector('.todo-list') as HTMLElement
-      if (sidebar && !sidebar.classList.contains('fc-draggable-initialized')) {
-        new Draggable(sidebar, {
-          itemSelector: '.draggable.fc-event',
-          eventData: function(eventEl) {
-            const data = eventEl.getAttribute('data-event')
-            return data ? JSON.parse(data) : null
-          }
-        })
-        sidebar.classList.add('fc-draggable-initialized')
-      }
-    }
-  }, [])
+  // FullCalendar Draggable initialization is handled above to avoid duplicates
 
   // Handle eventReceive for external drops
   const handleEventReceive = async (info: any) => {
-    const start = info.event.start;
-    const end = new Date(start.getTime() + 30 * 60 * 1000);
-    await createEvent({
-      title: info.event.title,
-      start: start.toISOString(),
-      end: end.toISOString()
-    });
-    info.event.remove();
+    try {
+      console.log('handleEventReceive start', info?.draggedEl, info?.event && { title: info.event.title, start: info.event.start })
+      const start = info.event.start;
+      const end = new Date(start.getTime() + 30 * 60 * 1000);
+
+      // Get todo metadata from the dropped event
+      const todoData = info.event.extendedProps?.todoData || {}
+
+      // Create event via helper (use same safe path as manual create)
+      const created = await createEvent({ title: info.event.title, start: start.toISOString(), end: end.toISOString() })
+      if (!created) {
+        console.error('createEvent failed during handleEventReceive')
+        try { info.revert() } catch {}
+        return
+      }
+
+      const newEvent = created
+
+      // Update the received event in-place so FullCalendar keeps it visible
+      try {
+        if (info && info.event) {
+          // set the DB id on the event so future operations can reference it
+          info.event.setProp('id', String(newEvent.id))
+          // set visual styles
+          try { info.event.setProp('backgroundColor', '#66bb6a') } catch {}
+          try { info.event.setProp('borderColor', '#1b5e20') } catch {}
+          try { info.event.setProp('textColor', '#ffffff') } catch {}
+          // try setting extended props if the column exists (not all schemas have it)
+          try {
+            if (newEvent.extended_props) {
+              Object.keys(newEvent.extended_props).forEach(key => {
+                try { info.event.setExtendedProp(key, newEvent.extended_props[key]) } catch {}
+              })
+            }
+          } catch (e) {
+            // ignore if extended_props column doesn't exist
+          }
+        }
+      } catch (e) {
+        console.warn('Could not update received event in-place', e)
+      }
+
+      // Add or replace the persisted event in local state
+      setEvents(prev => {
+        const exists = prev.some(e => String(e.id) === String(newEvent.id))
+        const persisted = {
+          id: newEvent.id,
+          title: newEvent.title ?? info.event.title,
+          start: newEvent.start_date ?? start.toISOString(),
+          end: newEvent.end_date ?? end.toISOString(),
+          // persisted color values for UI consistency
+          backgroundColor: '#66bb6a',
+          borderColor: '#1b5e20',
+          textColor: '#ffffff',
+          extendedProps: newEvent.extended_props
+        }
+        if (exists) {
+          return prev.map(e => String(e.id) === String(newEvent.id) ? persisted : e)
+        }
+        return [...prev, { ...persisted, extendedProps: newEvent.extended_props ?? {} }]
+      })
+    } catch (error) {
+      console.error('Error handling dropped todo:', error)
+      try { info.revert() } catch {}
+    }
   }
 
   // Show loading spinner while checking authentication
@@ -492,70 +620,9 @@ export default function Home() {
 
   return (
     <div className="app-container">
-      <div className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ color: 'white', fontSize: '24px', fontWeight: '700' }}>
-            📅 Student Calendar
-          </span>
-        </div>
-        <div className="app-title" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-          <Image 
-            src="/sukejuru-logo.svg" 
-            alt="sukejuru" 
-            width={200} 
-            height={60}
-            style={{ color: 'white' }}
-          />
-        </div>
-
-        {/* Menu bar */}
-
-        <div className="user-info">
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {/* Notification Toggle */}
-            <button
-              onClick={async () => {
-                if (!notificationsEnabled) {
-                  const hasPermission = await notificationService.requestPermission()
-                  setNotificationsEnabled(hasPermission)
-                  if (hasPermission && events.length > 0) {
-                    notificationService.scheduleNotifications(events)
-                  }
-                } else {
-                  notificationService.cleanup()
-                  setNotificationsEnabled(false)
-                }
-              }}
-              className={`nav-btn ${notificationsEnabled ? 'notification-enabled' : 'notification-disabled'}`}
-              title={notificationsEnabled ? 'Notifications ON - Click to disable' : 'Notifications OFF - Click to enable'}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '13px'
-              }}
-            >
-              {notificationsEnabled ? '🔔' : '🔇'}
-              <span style={{ fontSize: '13px' }}>{notificationsEnabled ? 'ON' : 'OFF'}</span>
-            </button>
-
-            {/* MAKE THIS OPEN AS A SMOOTH SIDE BAR IN THE FUTURE */}
-            <Link href="/friends" className="nav-btn">
-              👥 Friends
-            </Link>
-            
-            <Link href="/courses" className="nav-btn">
-              📚 Courses
-            </Link>
-            <Link href="/todo" className="nav-btn">
-              📝 Todo
-            </Link>
-            <Link href="/profile" className="nav-btn">
-              Profile
-            </Link>
-          </div>
-        </div>
-      </div>
+      <Header />
+      
+      {/* Calendar-specific notification toggle removed per user request */}
 
       <div className="main-content">
         <div id="main-layout">
@@ -577,6 +644,7 @@ export default function Home() {
                 slotDuration="01:00:00"
                 slotLabelInterval="01:00:00"
                 eventDrop={handleEventDrop}
+                droppable={true}
                 eventClick={(clickInfo) => {
                   const action = prompt(
                     `What would you like to do with "${clickInfo.event.title}"?\n\n` +
@@ -609,7 +677,6 @@ export default function Home() {
                 dateClick={(dateInfo) => {
                   setSelectedDate(dateInfo.date)
                 }}
-                droppable={true}
                 eventReceive={handleEventReceive}
               />
             </div>
