@@ -8,6 +8,7 @@ import { DateSelectArg, EventClickArg, EventDropArg, EventInput } from '@fullcal
 import Link from 'next/link'
 import Image from 'next/image'
 import Header from '@/components/Header'
+import EventEditModal from '@/components/EventEditModal'
 import { TabPanel } from '@/components/TabPanel'
 import { TodoPanel } from '@/components/TodoPanel'
 import { useRouter } from 'next/router'
@@ -231,7 +232,14 @@ export default function Home() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined)
   const [calendarRef, setCalendarRef] = useState<any>(null)
+  const [editingEvent, setEditingEvent] = useState<any>(null)
   const router = useRouter()
+
+  const DEFAULT_EVENT_COLORS = {
+    background: '#66bb6a',
+    border: '#1b5e20',
+    text: '#ffffff'
+  }
 
   // Handle window resize for calendar
   useEffect(() => {
@@ -382,7 +390,16 @@ export default function Home() {
         .eq('user_id', session.user.id)
         .order('start_date', { ascending: true })
       
-      const eventsList = (data||[]).map(e => ({ id: e.id, title: e.title, start: e.start_date, end: e.end_date }))
+      const eventsList = (data||[]).map(e => ({
+        id: String(e.id),
+        title: e.title,
+        start: e.start_date,
+        end: e.end_date,
+        backgroundColor: e.background_color || DEFAULT_EVENT_COLORS.background,
+        borderColor: e.border_color || DEFAULT_EVENT_COLORS.border,
+        textColor: e.text_color || DEFAULT_EVENT_COLORS.text,
+        extendedProps: { dbId: e.id, description: e.description || undefined }
+      }))
       setEvents(eventsList)
 
       // Calculate earliest event time for calendar display
@@ -428,7 +445,10 @@ export default function Home() {
       user_id: session?.user.id,
       title,
       start_date: start,
-      end_date: end
+      end_date: end,
+      background_color: DEFAULT_EVENT_COLORS.background,
+      border_color: DEFAULT_EVENT_COLORS.border,
+      text_color: DEFAULT_EVENT_COLORS.text
     }).select('*').single()
 
     if (error) {
@@ -437,7 +457,16 @@ export default function Home() {
     }
 
     if (data) {
-      setEvents(prev => [...prev, { id: data.id, title, start, end }])
+      setEvents(prev => [...prev, {
+        id: String(data.id),
+        title,
+        start,
+        end,
+        backgroundColor: data.background_color || DEFAULT_EVENT_COLORS.background,
+        borderColor: data.border_color || DEFAULT_EVENT_COLORS.border,
+        textColor: data.text_color || DEFAULT_EVENT_COLORS.text,
+        extendedProps: { dbId: data.id }
+      }])
       return data
     }
 
@@ -488,14 +517,14 @@ export default function Home() {
   }
   
   const handleEventDrop = async (dropInfo: EventDropArg) => {
-    const { id } = dropInfo.event
+    const dbId = (dropInfo.event.extendedProps as any)?.dbId ?? dropInfo.event.id
     const start = dropInfo.event.start?.toISOString()!
     const end = dropInfo.event.end?.toISOString()!
     try {
       const { data, error } = await supabase
         .from('events')
         .update({ start_date: start, end_date: end })
-        .eq('id', id)
+        .eq('id', dbId)
         .eq('user_id', session?.user.id)
 
       if (error) {
@@ -505,7 +534,7 @@ export default function Home() {
       }
 
       // Keep local state in sync with calendar
-      setEvents(prev => prev.map(e => String(e.id) === String(id) ? ({ ...e, start, end }) : e))
+  setEvents(prev => prev.map(e => String(e.id) === String(dropInfo.event.id) ? ({ ...e, start, end }) : e))
     } catch (err) {
       console.error('Error in handleEventDrop:', err)
       try { dropInfo.revert() } catch {}
@@ -513,10 +542,72 @@ export default function Home() {
   }
   
   const handleEventClick = async (clickInfo: EventClickArg) => {
-    if (confirm(`Delete event '${clickInfo.event.title}'?`)) {
-      await supabase.from('events').delete().eq('id', clickInfo.event.id).eq('user_id', session?.user.id)
-      setEvents(prev => prev.filter(e => e.id !== clickInfo.event.id))
+    // open modal with event data
+    const ev = clickInfo.event
+    setEditingEvent({ id: ev.id, title: ev.title, start: ev.start?.toISOString(), end: ev.end?.toISOString(), extendedProps: ev.extendedProps })
+  }
+
+  const handleSaveEvent = async (updated: { id: string | number; dbId?: string | number; title: string; start: string; end: string; description?: string; backgroundColor?: string; borderColor?: string; textColor?: string }) => {
+    // Attempt to update DB with color columns. If that fails (likely unknown columns),
+    // retry with a minimal payload and still apply colors to the UI so user sees immediate result.
+    const updatePayload: any = { title: updated.title, start_date: updated.start, end_date: updated.end }
+    if (updated.backgroundColor) updatePayload.background_color = updated.backgroundColor
+    if (updated.borderColor) updatePayload.border_color = updated.borderColor
+    if (updated.textColor) updatePayload.text_color = updated.textColor
+
+    try {
+      const dbId = (updated as any).dbId ?? updated.id
+      const { data, error } = await supabase
+        .from('events')
+        .update(updatePayload)
+        .eq('id', dbId)
+        .eq('user_id', session?.user.id)
+        .select('*')
+        .single()
+
+      if (error) {
+        // If update failed, attempt fallback without color columns
+        console.warn('Initial update failed, attempting fallback without color columns:', error)
+        const fallbackPayload: any = { title: updated.title, start_date: updated.start, end_date: updated.end }
+        const { error: fallbackError } = await supabase
+          .from('events')
+          .update(fallbackPayload)
+          .eq('id', dbId)
+          .eq('user_id', session?.user.id)
+
+        if (fallbackError) {
+          console.error('Fallback update also failed:', fallbackError)
+          throw fallbackError
+        }
+      }
+
+      // update local state (including color fields if we have them)
+  setEvents(prev => prev.map(e => String(e.id) === String(updated.id) ? ({ ...e, title: updated.title, start: updated.start, end: updated.end, backgroundColor: updated.backgroundColor ?? e.backgroundColor, borderColor: updated.borderColor ?? e.borderColor, textColor: updated.textColor ?? e.textColor, extendedProps: { ...(e.extendedProps||{}), dbId } }) : e))
+
+      // Do not mutate FullCalendar event directly; rely on controlled state above.
+    } catch (e) {
+      console.error('Failed to save event after fallback attempts:', e)
+      // Rethrow so caller (modal) can show an error if both attempts failed
+      throw e
     }
+  }
+
+  const handleDeleteEvent = async (id: string | number, dbIdParam?: string | number) => {
+    try {
+      const dbId = dbIdParam ?? id
+      const { error } = await supabase.from('events').delete().eq('id', dbId).eq('user_id', session?.user.id)
+      if (error) throw error
+      setEvents(prev => prev.filter(e => String(e.id) !== String(id)))
+
+      try { const api = calendarRef?.getApi(); api?.getEventById(String(id))?.remove() } catch {}
+    } catch (e) {
+      console.error('Failed to delete event:', e)
+      throw e
+    }
+  }
+
+  const handleConvertEventToTodo = async (event: { id: string | number; title?: string; start?: string; end?: string }) => {
+    await convertEventToTodo({ id: String(event.id), title: event.title ?? '', start: event.start ?? '', end: event.end ?? '' })
   }
 
   // Handle external drop from todo
@@ -556,10 +647,6 @@ export default function Home() {
         if (info && info.event) {
           // set the DB id on the event so future operations can reference it
           info.event.setProp('id', String(newEvent.id))
-          // set visual styles
-          try { info.event.setProp('backgroundColor', '#66bb6a') } catch {}
-          try { info.event.setProp('borderColor', '#1b5e20') } catch {}
-          try { info.event.setProp('textColor', '#ffffff') } catch {}
           // try setting extended props if the column exists (not all schemas have it)
           try {
             if (newEvent.extended_props) {
@@ -567,6 +654,8 @@ export default function Home() {
                 try { info.event.setExtendedProp(key, newEvent.extended_props[key]) } catch {}
               })
             }
+            // always set dbId for future operations
+            try { info.event.setExtendedProp('dbId', newEvent.id) } catch {}
           } catch (e) {
             // ignore if extended_props column doesn't exist
           }
@@ -579,7 +668,7 @@ export default function Home() {
       setEvents(prev => {
         const exists = prev.some(e => String(e.id) === String(newEvent.id))
         const persisted = {
-          id: newEvent.id,
+          id: String(newEvent.id),
           title: newEvent.title ?? info.event.title,
           start: newEvent.start_date ?? start.toISOString(),
           end: newEvent.end_date ?? end.toISOString(),
@@ -587,12 +676,12 @@ export default function Home() {
           backgroundColor: '#66bb6a',
           borderColor: '#1b5e20',
           textColor: '#ffffff',
-          extendedProps: newEvent.extended_props
+          extendedProps: { ...(newEvent.extended_props || {}), dbId: newEvent.id }
         }
         if (exists) {
           return prev.map(e => String(e.id) === String(newEvent.id) ? persisted : e)
         }
-        return [...prev, { ...persisted, extendedProps: newEvent.extended_props ?? {} }]
+        return [...prev, { ...persisted }]
       })
     } catch (error) {
       console.error('Error handling dropped todo:', error)
@@ -646,27 +735,33 @@ export default function Home() {
                 eventDrop={handleEventDrop}
                 droppable={true}
                 eventClick={(clickInfo) => {
-                  const action = prompt(
-                    `What would you like to do with "${clickInfo.event.title}"?\n\n` +
-                    `1. Delete event (type "delete")\n` +
-                    `2. Convert to todo (type "todo")\n` +
-                    `3. Cancel (press Cancel or leave blank)`
-                  )
-                  
-                  if (action?.toLowerCase() === 'delete') {
-                    handleEventClick(clickInfo)
-                  } else if (action?.toLowerCase() === 'todo') {
-                    convertEventToTodo({
-                      id: clickInfo.event.id,
-                      title: clickInfo.event.title,
-                      start: clickInfo.event.start?.toISOString(),
-                      end: clickInfo.event.end?.toISOString()
-                    })
-                  }
+                  handleEventClick(clickInfo)
                 }}
                 eventResizableFromStart={true}
                 slotMinTime={slotMinTime}
                 slotMaxTime="23:00:00"
+                eventDidMount={(info) => {
+                  try {
+                    const el = info.el as HTMLElement
+                    const anyEvent: any = info.event as any
+                    const bg = anyEvent.backgroundColor || anyEvent.extendedProps?.backgroundColor
+                    const border = anyEvent.borderColor || anyEvent.extendedProps?.borderColor || bg
+                    const text = anyEvent.textColor || anyEvent.extendedProps?.textColor
+                    if (bg) {
+                      el.style.setProperty('--fc-event-bg-color', bg)
+                      el.style.backgroundColor = bg
+                    }
+                    if (border) {
+                      el.style.setProperty('--fc-event-border-color', border)
+                      el.style.borderColor = border
+                    }
+                    if (text) {
+                      el.style.setProperty('--fc-event-text-color', text)
+                      const main = el.querySelector('.fc-event-main') as HTMLElement
+                      if (main) main.style.color = text
+                    }
+                  } catch {}
+                }}
                 viewDidMount={(viewInfo) => {
                   setCurrentView(viewInfo.view.type as 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay')
                   setCurrentDate(viewInfo.view.currentStart)
@@ -679,6 +774,14 @@ export default function Home() {
                 }}
                 eventReceive={handleEventReceive}
               />
+                {editingEvent && (
+                  <EventEditModal
+                    event={editingEvent}
+                    onClose={() => setEditingEvent(null)}
+                    onSave={async (updated) => { await handleSaveEvent({ ...updated, dbId: editingEvent?.extendedProps?.dbId ?? updated.id }) }}
+                    onDelete={async (id) => { await handleDeleteEvent(id, editingEvent?.extendedProps?.dbId ?? id); }}
+                  />
+                )}
             </div>
           </div>
           
