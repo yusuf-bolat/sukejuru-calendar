@@ -236,7 +236,7 @@ export default function Home() {
   const router = useRouter()
 
   const DEFAULT_EVENT_COLORS = {
-    background: '#66bb6a',
+  background: '#1976d2',
     border: '#1b5e20',
     text: '#ffffff'
   }
@@ -338,10 +338,8 @@ export default function Home() {
             return {
               title: 'Dropped Todo',
               duration: '00:30:00',
-              // Match green palette used by the todo sidebar
-              backgroundColor: '#66bb6a',
-              borderColor: '#1b5e20',
-              textColor: '#ffffff'
+              // Match blue palette used by the todo sidebar
+              backgroundColor: '#1976d2'
             }
           }
         })
@@ -396,8 +394,6 @@ export default function Home() {
         start: e.start_date,
         end: e.end_date,
         backgroundColor: e.background_color || DEFAULT_EVENT_COLORS.background,
-        borderColor: e.border_color || DEFAULT_EVENT_COLORS.border,
-        textColor: e.text_color || DEFAULT_EVENT_COLORS.text,
         extendedProps: { dbId: e.id, description: e.description || undefined }
       }))
       setEvents(eventsList)
@@ -446,9 +442,7 @@ export default function Home() {
       title,
       start_date: start,
       end_date: end,
-      background_color: DEFAULT_EVENT_COLORS.background,
-      border_color: DEFAULT_EVENT_COLORS.border,
-      text_color: DEFAULT_EVENT_COLORS.text
+      background_color: DEFAULT_EVENT_COLORS.background
     }).select('*').single()
 
     if (error) {
@@ -463,8 +457,6 @@ export default function Home() {
         start,
         end,
         backgroundColor: data.background_color || DEFAULT_EVENT_COLORS.background,
-        borderColor: data.border_color || DEFAULT_EVENT_COLORS.border,
-        textColor: data.text_color || DEFAULT_EVENT_COLORS.text,
         extendedProps: { dbId: data.id }
       }])
       return data
@@ -550,10 +542,8 @@ export default function Home() {
   const handleSaveEvent = async (updated: { id: string | number; dbId?: string | number; title: string; start: string; end: string; description?: string; backgroundColor?: string; borderColor?: string; textColor?: string }) => {
     // Attempt to update DB with color columns. If that fails (likely unknown columns),
     // retry with a minimal payload and still apply colors to the UI so user sees immediate result.
-    const updatePayload: any = { title: updated.title, start_date: updated.start, end_date: updated.end }
-    if (updated.backgroundColor) updatePayload.background_color = updated.backgroundColor
-    if (updated.borderColor) updatePayload.border_color = updated.borderColor
-    if (updated.textColor) updatePayload.text_color = updated.textColor
+  const updatePayload: any = { title: updated.title, start_date: updated.start, end_date: updated.end }
+  if (updated.backgroundColor) updatePayload.background_color = updated.backgroundColor
 
     try {
       const dbId = (updated as any).dbId ?? updated.id
@@ -581,8 +571,8 @@ export default function Home() {
         }
       }
 
-      // update local state (including color fields if we have them)
-  setEvents(prev => prev.map(e => String(e.id) === String(updated.id) ? ({ ...e, title: updated.title, start: updated.start, end: updated.end, backgroundColor: updated.backgroundColor ?? e.backgroundColor, borderColor: updated.borderColor ?? e.borderColor, textColor: updated.textColor ?? e.textColor, extendedProps: { ...(e.extendedProps||{}), dbId } }) : e))
+    // update local state (including backgroundColor if we have it)
+  setEvents(prev => prev.map(e => String(e.id) === String(updated.id) ? ({ ...e, title: updated.title, start: updated.start, end: updated.end, backgroundColor: updated.backgroundColor ?? e.backgroundColor, extendedProps: { ...(e.extendedProps||{}), dbId } }) : e))
 
       // Do not mutate FullCalendar event directly; rely on controlled state above.
     } catch (e) {
@@ -673,9 +663,7 @@ export default function Home() {
           start: newEvent.start_date ?? start.toISOString(),
           end: newEvent.end_date ?? end.toISOString(),
           // persisted color values for UI consistency
-          backgroundColor: '#66bb6a',
-          borderColor: '#1b5e20',
-          textColor: '#ffffff',
+          backgroundColor: '#1976d2',
           extendedProps: { ...(newEvent.extended_props || {}), dbId: newEvent.id }
         }
         if (exists) {
@@ -745,20 +733,9 @@ export default function Home() {
                     const el = info.el as HTMLElement
                     const anyEvent: any = info.event as any
                     const bg = anyEvent.backgroundColor || anyEvent.extendedProps?.backgroundColor
-                    const border = anyEvent.borderColor || anyEvent.extendedProps?.borderColor || bg
-                    const text = anyEvent.textColor || anyEvent.extendedProps?.textColor
                     if (bg) {
                       el.style.setProperty('--fc-event-bg-color', bg)
                       el.style.backgroundColor = bg
-                    }
-                    if (border) {
-                      el.style.setProperty('--fc-event-border-color', border)
-                      el.style.borderColor = border
-                    }
-                    if (text) {
-                      el.style.setProperty('--fc-event-text-color', text)
-                      const main = el.querySelector('.fc-event-main') as HTMLElement
-                      if (main) main.style.color = text
                     }
                   } catch {}
                 }}

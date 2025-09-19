@@ -33,7 +33,7 @@ export default function EventEditModal({ event, onClose, onSave, onDelete }: Eve
   const [start, setStart] = useState(toLocalInputValue(event.start))
   const [end, setEnd] = useState(toLocalInputValue(event.end))
   const [description, setDescription] = useState(event.extendedProps?.description || '')
-  const [backgroundColor, setBackgroundColor] = useState(event.extendedProps?.backgroundColor || event.backgroundColor || '#66bb6a')
+  const [backgroundColor, setBackgroundColor] = useState(event.extendedProps?.backgroundColor || event.backgroundColor || '#1976d2')
   const [borderColor, setBorderColor] = useState(event.extendedProps?.borderColor || event.borderColor || '#1b5e20')
   const [textColor, setTextColor] = useState(event.extendedProps?.textColor || event.textColor || '#ffffff')
   const [saving, setSaving] = useState(false)
@@ -86,7 +86,7 @@ export default function EventEditModal({ event, onClose, onSave, onDelete }: Eve
   }
 
   const handleDelete = async () => {
-    if (!confirm('Delete this event?')) return
+  // Proceed to delete immediately without an extra confirmation dialog
     setSaving(true)
     try {
       await onDelete(event.id)
