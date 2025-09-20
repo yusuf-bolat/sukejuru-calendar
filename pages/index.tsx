@@ -11,6 +11,7 @@ import Header from '@/components/Header'
 import EventEditModal from '@/components/EventEditModal'
 import { TabPanel } from '@/components/TabPanel'
 import { TodoPanel } from '@/components/TodoPanel'
+import ThreeDotMenu from '@/components/ThreeDotMenu'
 import { useRouter } from 'next/router'
 
 // Notification Service
@@ -705,13 +706,30 @@ export default function Home() {
         <div id="main-layout">
           <div id="calendar-section">
             <div id="calendar">
+              {/* Floating three-dot menu (top-right of calendar) */}
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                <div style={{ position: 'absolute', right: 0, top: -40 }}>
+                  <ThreeDotMenu session={session} />
+                </div>
+              </div>
               <FullCalendar
                 ref={setCalendarRef}
                 plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
                 initialView="timeGridWeek"
                 firstDay={1}
                 timeZone="local"
-                headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' }}
+                customButtons={{
+                  moreMenu: {
+                    text: '⋯',
+                    click: function() {
+                      // find button DOM and dispatch event with its bounding rect
+                      const btn = document.querySelector('.fc-moreMenu-button') as HTMLElement | null
+                      const rect = btn?.getBoundingClientRect ? btn.getBoundingClientRect() : null
+                      window.dispatchEvent(new CustomEvent('threeDot:open', { detail: { rect } }))
+                    }
+                  }
+                }}
+                headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay moreMenu' }}
                 selectable={true}
                 selectMirror={true}
                 select={handleDateSelect}
