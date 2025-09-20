@@ -50,3 +50,4 @@ dist/
 mobile-app/
 mobile-app.bak/
 mobile/
+.env.local
