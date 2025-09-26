@@ -130,6 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 async function processCalendarResponse(response: any, userId: string): Promise<any> {
   const calendarEvents = []
   const assignments = []
+  let createdRows: any[] = []
   
   // Separate events into calendar events and assignments
   if (response.events && Array.isArray(response.events)) {
@@ -157,11 +158,13 @@ async function processCalendarResponse(response: any, userId: string): Promise<a
     const eventsWithUserId = calendarEvents.map(event => ({
       user_id: userId,
       title: event.title,
-      start_date: event.start_date,
-      end_date: event.end_date,
-      all_day: event.all_day || false,
+      start_date: event.start_date ? new Date(event.start_date).toISOString() : null,
+      end_date: event.end_date ? new Date(event.end_date).toISOString() : null,
+      all_day: !!event.all_day,
       color: event.color || '#3788d8',
-      description: event.description || ''
+      background_color: event.background_color || event.color || '#3788d8',
+      description: event.description || '',
+      extended_props: event.extended_props || null
     }))
 
     try {
@@ -176,7 +179,19 @@ async function processCalendarResponse(response: any, userId: string): Promise<a
         console.error('Sample event data:', eventsWithUserId[0])
       } else {
         console.log(`Successfully created ${data?.length || 0} calendar events`)
+        // normalize date strings on returned rows
+        if (Array.isArray(data)) {
+          const normalizedData = data.map((r: any) => ({
+            ...r,
+            start_date: r.start_date ? new Date(r.start_date).toISOString() : null,
+            end_date: r.end_date ? new Date(r.end_date).toISOString() : null
+          }))
+          createdRows = normalizedData
+        } else {
+          createdRows = data || []
+        }
       }
+      // expose created rows for client diagnostics (already set above)
     } catch (err) {
       console.error('Database error creating calendar events:', err)
     }
@@ -213,6 +228,7 @@ async function processCalendarResponse(response: any, userId: string): Promise<a
     action: response.action,
     calendarEvents: calendarEvents.length,
     assignments: assignments.length,
+    createdRows: createdRows || [],
     summary: `Created ${calendarEvents.length} calendar events and ${assignments.length} assignments. ${response.summary || ''}`
   }
 }

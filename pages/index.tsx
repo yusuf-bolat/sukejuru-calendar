@@ -392,10 +392,12 @@ export default function Home() {
       const eventsList = (data||[]).map(e => ({
         id: String(e.id),
         title: e.title,
-        start: e.start_date,
-        end: e.end_date,
-        backgroundColor: e.background_color || DEFAULT_EVENT_COLORS.background,
-        extendedProps: { dbId: e.id, description: e.description || undefined }
+        // Ensure start/end are ISO strings (Supabase may sometimes return Date objects)
+        start: typeof e.start_date === 'string' ? e.start_date : (e.start_date ? new Date(e.start_date).toISOString() : null),
+        end: typeof e.end_date === 'string' ? e.end_date : (e.end_date ? new Date(e.end_date).toISOString() : null),
+        // Prefer background_color, fall back to color, then default
+        backgroundColor: e.background_color || e.color || DEFAULT_EVENT_COLORS.background,
+        extendedProps: { ...(e.extended_props || {}), dbId: e.id, description: e.description || undefined }
       }))
       setEvents(eventsList)
 
@@ -425,8 +427,18 @@ export default function Home() {
     }
     load()
     const onReload = () => load()
+    const onReloadWithRows = (e: any) => {
+      console.log('calendar:reload-with-rows detail:', e?.detail)
+      // Force reload to pick up newly created rows
+      load()
+    }
+
     window.addEventListener('calendar:reload', onReload)
-    return () => window.removeEventListener('calendar:reload', onReload)
+    window.addEventListener('calendar:reload-with-rows', onReloadWithRows as EventListener)
+    return () => {
+      window.removeEventListener('calendar:reload', onReload)
+      window.removeEventListener('calendar:reload-with-rows', onReloadWithRows as EventListener)
+    }
   }, [session])
 
   const handleDateSelect = (selectInfo: DateSelectArg) => {
@@ -661,10 +673,10 @@ export default function Home() {
         const persisted = {
           id: String(newEvent.id),
           title: newEvent.title ?? info.event.title,
-          start: newEvent.start_date ?? start.toISOString(),
-          end: newEvent.end_date ?? end.toISOString(),
-          // persisted color values for UI consistency
-          backgroundColor: '#1976d2',
+          start: typeof newEvent.start_date === 'string' ? newEvent.start_date : (newEvent.start_date ? new Date(newEvent.start_date).toISOString() : start.toISOString()),
+          end: typeof newEvent.end_date === 'string' ? newEvent.end_date : (newEvent.end_date ? new Date(newEvent.end_date).toISOString() : end.toISOString()),
+          // persisted color values for UI consistency - prefer background_color or color
+          backgroundColor: newEvent.background_color || newEvent.color || '#1976d2',
           extendedProps: { ...(newEvent.extended_props || {}), dbId: newEvent.id }
         }
         if (exists) {

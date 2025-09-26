@@ -1,5 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import OpenAI from 'openai'
+// Token counting helper (optional dependency)
+let tiktoken: any = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  tiktoken = require('@dqbd/tiktoken')
+} catch (e) {
+  // Not installed — we'll use a conservative char->token fallback
+  tiktoken = null
+}
 import { systemPrompt } from '@/lib/prompt'
 import { supabase } from '@/lib/supabaseClient'
 import { fetchCoursesForAI } from '@/lib/courseAIData'
@@ -456,47 +465,135 @@ SPECIAL COMMANDS - Always respond with JSON format {"command": "command_name", "
 
 MANDATORY: Always use Asia/Tokyo timezone (+09:00). ALWAYS respond with JSON for calendar actions - never plain text responses.`
 
-    // Build messages array with conversation history
+    // Diagnostics: presence of critical env vars (do not log values)
+    console.log('[diagnostic] OPENAI_API_KEY present=', !!process.env.OPENAI_API_KEY)
+    console.log('[diagnostic] NEXT_PUBLIC_SUPABASE_URL present=', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+    console.log('[diagnostic] SUPABASE_SERVICE_ROLE_KEY present=', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+
+    // Token counting + guarding
+    const modelToUse = process.env.OPENAI_MODEL || 'gpt-5-mini'
+    console.log('[diagnostic] Using OpenAI model=', modelToUse)
+    if (modelToUse && modelToUse.toLowerCase().startsWith('gpt-5')) {
+      console.warn('[diagnostic] gpt-5 model selected; ensure your OpenAI account has access to this model and the model name is correct')
+    }
+
+    // Estimate model limits (conservative defaults)
+    const MODEL_LIMITS: Record<string, number> = {
+      'gpt-5-mini': 131072,
+      'gpt-4o-mini': 65536,
+      'gpt-4o': 65536,
+      'gpt-4o-mini-preview': 65536
+    }
+
+    const modelLimit = MODEL_LIMITS[modelToUse] || 128000
+
+    const countTokensForMessages = (messages: { role: string; content: string }[], modelName: string) => {
+      try {
+        if (tiktoken && tiktoken.encoding_for_model) {
+          const enc = tiktoken.encoding_for_model(modelName)
+          let total = 0
+          for (const m of messages) {
+            // rough approach: count tokens for role + content
+            total += enc.encode(m.role + '\n' + (m.content || '')).length
+          }
+          try { enc.free && enc.free() } catch (_) {}
+          return total
+        }
+      } catch (err) {
+        console.warn('[diagnostic] tiktoken count failed, falling back to char estimate', err)
+      }
+      // Fallback: approximate tokens as chars/4
+      const chars = messages.reduce((s, m) => s + (m.content || '').length + m.role.length, 0)
+      return Math.ceil(chars / 4)
+    }
+
     const openaiMessages: any[] = [
       { role: 'system', content: enhancedPrompt }
     ]
-    
     // Add conversation history
     conversationHistory.forEach(msg => {
       openaiMessages.push({ role: msg.role, content: msg.content })
     })
-    
     // Add current user message
     openaiMessages.push({ role: 'user', content: message })
 
-    const completion = await client.chat.completions.create({ 
-      model: 'gpt-4o-mini', 
-      temperature: 0.4, 
-      messages: openaiMessages 
-    })
-    
-    const reply = completion.choices[0]?.message?.content || 'Sorry, I could not respond.'
-    
-    // Save conversation to database
+    const estimatedTokens = countTokensForMessages(openaiMessages, modelToUse)
+    console.log('[diagnostic] Estimated tokens for request=', estimatedTokens, 'limit=', modelLimit)
+    if (estimatedTokens > modelLimit) {
+      return res.status(413).json({
+        error: 'Prompt too large',
+        details: `Estimated tokens ${estimatedTokens} exceed model limit ${modelLimit}`,
+        suggestion: 'Trim conversation history or enable summarization/auto-trim. Set OPENAI_MODEL env var to a model with larger context if available.'
+      })
+    }
+
+    // Call OpenAI with diagnostics and guarded error handling
+    let reply = 'Sorry, I could not respond.'
+    const requestedTemp = typeof process.env.OPENAI_TEMPERATURE !== 'undefined' ? parseFloat(process.env.OPENAI_TEMPERATURE) : 0.4
+    try {
+      console.log('[diagnostic] Calling OpenAI with', openaiMessages.length, 'messages', 'model=', modelToUse, 'temp=', requestedTemp)
+      let completion: any
+      try {
+        completion = await client.chat.completions.create({
+          model: modelToUse,
+          temperature: requestedTemp,
+          messages: openaiMessages
+        })
+      } catch (firstErr: any) {
+        // If model complains about temperature (some models only accept default 1), retry with temperature=1
+        const isTempErr = firstErr && (firstErr.code === 'unsupported_value' || firstErr?.error?.code === 'unsupported_value') && (firstErr.param === 'temperature' || firstErr?.error?.param === 'temperature')
+        if (isTempErr) {
+          console.warn('[diagnostic] Model rejected temperature=', requestedTemp, '— retrying with temperature=1')
+          try {
+            completion = await client.chat.completions.create({
+              model: modelToUse,
+              temperature: 1,
+              messages: openaiMessages
+            })
+          } catch (secondErr: any) {
+            console.error('[diagnostic] OpenAI retry with temperature=1 failed:', secondErr)
+            const details = (secondErr && (secondErr.message || secondErr.toString())) || 'OpenAI error with no message'
+            return res.status(502).json({ error: 'AI provider call failed on retry', details })
+          }
+        } else {
+          // Not a temperature-related error — surface original error
+          console.error('[diagnostic] OpenAI call failed:', firstErr)
+          const details = (firstErr && (firstErr.message || firstErr.toString())) || 'OpenAI error with no message'
+          return res.status(502).json({ error: 'AI provider call failed', details })
+        }
+      }
+
+      reply = completion?.choices?.[0]?.message?.content || reply
+      console.log('[diagnostic] OpenAI returned reply length=', (reply || '').length)
+    } catch (aiErr: any) {
+      // Catch-all — Surface provider error in logs and response
+      console.error('[diagnostic] OpenAI call failed (outer):', aiErr)
+      const details = (aiErr && (aiErr.message || aiErr.toString())) || 'OpenAI error with no message'
+      return res.status(502).json({ error: 'AI provider call failed', details })
+    }
+
+    // Save conversation to database (guarded) and log any DB errors
     try {
       // Save user message
-      await supabase.from('messages').insert({
+      const { error: userSaveErr } = await supabase.from('messages').insert({
         user_id: user.id,
         role: 'user',
         content: message
       })
-      
+      if (userSaveErr) console.warn('[diagnostic] Failed to save user message:', userSaveErr)
+
       // Save AI response
-      await supabase.from('messages').insert({
+      const { error: aiSaveErr } = await supabase.from('messages').insert({
         user_id: user.id,
         role: 'assistant',
         content: reply
       })
+      if (aiSaveErr) console.warn('[diagnostic] Failed to save assistant message:', aiSaveErr)
     } catch (saveError) {
-      console.warn('Failed to save conversation:', saveError)
-      // Don't fail the request if conversation saving fails
+      console.warn('[diagnostic] Exception when saving conversation:', saveError)
+      // Do not fail the entire request because of conversation save failure
     }
-    
+
     return res.status(200).json({ reply })
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'Unknown error' })
